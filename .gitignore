@@ -1,0 +1,8 @@
+# Personal data and secrets - never commit
+profiles.json
+.streamlit/secrets.toml
+.env
+
+__pycache__/
+*.pyc
+.venv/
