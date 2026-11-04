@@ -10,7 +10,6 @@ import pandas as pd
 import streamlit as st
 
 import astro_core as ac
-import llm_qa
 
 st.set_page_config(page_title="Jyotish Workbench", page_icon="🪐", layout="wide")
 
@@ -223,7 +222,7 @@ with st.sidebar:
     year_len = st.selectbox("Dasha year length (days)", [365.25, 365.2425, 360.0], index=0)
     st.divider()
     if st.button("Sign out", width="stretch"):
-        for k in ("authenticated", "chats"):
+        for k in ("authenticated", "pred_kind"):
             st.session_state.pop(k, None)
         st.rerun()
 
@@ -330,7 +329,7 @@ st.caption(f"Born {ch.dt_local.strftime('%d %b %Y, %H:%M')} · {ch.place or f'{c
            f"{ch.tz} · {ayan} ayanamsa {ch.ayan_value:.4f}° · {node} node")
 
 tabs = st.tabs(["Birth chart", "Dashas", "Yogas & Jaimini", "Transits & key dates", "Daily",
-                "Muhurta finder", "Compatibility", "Ask AI", "About"])
+                "Muhurta finder", "Compatibility", "Predictions", "About"])
 
 # ---- Birth chart ------------------------------------------------------------
 with tabs[0]:
@@ -647,70 +646,176 @@ with tabs[6]:
                                                                   "reading": "Reading"}),
                      hide_index=True, width="stretch")
 
-# ---- Ask AI -------------------------------------------------------------------------
+# ---- Predictions --------------------------------------------------------------------
+import predict as pr  # noqa: E402
 
 
-@st.cache_data(show_spinner=False, ttl=3 * 3600)
-def ai_context(key, _ch, _md, others_key, _others, day_iso):
-    return llm_qa.build_context(_ch, _md, date.fromisoformat(day_iso), _others)
+def _tone(score):
+    return "good" if score >= 60 else "mixed" if score >= 45 else "bad"
+
+
+def _verdict(score):
+    return "favourable" if score >= 60 else "mixed" if score >= 45 else "needs care"
+
+
+def _fmt_day(d):
+    return d.strftime("%a %d %b")
+
+
+def area_boxes(items):
+    html = ['<div class="cards">']
+    for title, text, tone in items:
+        html.append(f'<div class="card {tone}"><div class="val" style="font-size:1rem">{title}</div>'
+                    f'<div class="sub" style="font-size:.9rem;opacity:.9">{text}</div></div>')
+    html.append("</div>")
+    st.markdown("".join(html), unsafe_allow_html=True)
+
+
+def bar(df, x, y, height=230):
+    import altair as alt
+    df = df.copy()
+    df["Band"] = ["Favourable" if v >= 60 else "Mixed" if v >= 45 else "Needs care" for v in df[y]]
+    c = (alt.Chart(df).mark_bar(cornerRadiusTopLeft=3, cornerRadiusTopRight=3)
+         .encode(x=alt.X(f"{x}:N", sort=None, title=None, axis=alt.Axis(labelAngle=-45)),
+                 y=alt.Y(f"{y}:Q", scale=alt.Scale(domain=[0, 100]), title=y),
+                 color=alt.Color("Band:N", scale=alt.Scale(domain=["Favourable", "Mixed", "Needs care"],
+                                                           range=["#16a34a", "#d97706", "#dc2626"]),
+                                 legend=alt.Legend(orient="top", title=None)),
+                 tooltip=[x, y, "Band"]).properties(height=height))
+    rule = alt.Chart(pd.DataFrame({"n": [50]})).mark_rule(strokeDash=[4, 4], opacity=.5).encode(y="n:Q")
+    st.altair_chart(c + rule, width="stretch")
+
+
+AREA_TONE = {"Supportive": "good", "Mixed / steady": "mixed", "Challenging": "bad"}
+
+
+def show_day(d, la, lo, tz):
+    r = pr.predict_day(ch, md_list, d, la, lo, tz)
+    fc = r["forecast"]
+    cards([("Day rating", f"{fc['score']}/100", _verdict(fc["score"]), _tone(fc["score"])),
+           ("Star of the day", fc["tara"], ac.TARA_MEANING[fc["tara"]], fc["tara_quality"]),
+           ("Moon", f"House {fc['house_from_asc']}", ac.HOUSE_THEMES[fc["house_from_asc"]]),
+           ("Running dasha", " – ".join(p.lord for p in r["chain"]), "Mahadasha – Antar – Pratyantar")])
+    st.markdown(f"#### {_fmt_day(d)}: {r['headline']}")
+    area_boxes([(k, v, "") for k, v in r["areas"].items()])
+    c1, c2 = st.columns(2)
+    with c1:
+        st.markdown("**Do**")
+        for x in r["do"] or ["Keep to routine work."]:
+            st.markdown(f"- {x}")
+    with c2:
+        st.markdown("**Avoid**")
+        for x in r["avoid"]:
+            st.markdown(f"- {x}")
+    c1, c2 = st.columns(2)
+    with c1:
+        st.markdown("**Best windows**")
+        for s, e in fc["good_windows"] or []:
+            st.markdown(f"- {hm(s, tz)} – {hm(e, tz)}")
+        if not fc["good_windows"]:
+            st.markdown("- No strong window today; keep to routine work.")
+    with c2:
+        st.markdown("**Helpful hours (hora)**")
+        for h in r["good_horas"]:
+            st.markdown(f"- {hm(h['start'], tz)}–{hm(h['end'], tz)} {h['lord']}: {h['good_for']}")
+    st.caption("Full panchang and all 24 horas are in the Daily tab.")
+
+
+def show_range(d, ndays, tz):
+    r = pr.predict_range(ch, md_list, d, ndays, tz)
+    rt = r["rating"]
+    best = ", ".join(_fmt_day(x["date"]) for x in r["best"][:3])
+    worst = ", ".join(_fmt_day(x["date"]) for x in r["worst"][:3])
+    cards([("Overall rating", f"{rt['rating']}/100", _verdict(rt["rating"]), _tone(rt["rating"])),
+           ("Best days", best, "strongest daily scores", "good"),
+           ("Days to be careful", worst, "lowest daily scores", "bad"),
+           ("Running dasha", " – ".join(p.lord for p in rt["chain"]),
+            "; ".join(rt["notes"]) or "no Saturn pressure on the Moon")])
+    df = pd.DataFrame({"Day": [x["date"].strftime("%d %b") for x in r["days"]],
+                       "Score": [x["score"] for x in r["days"]]})
+    bar(df, "Day", "Score")
+    table = pd.DataFrame([{"Date": _fmt_day(x["date"]), "Score": x["score"],
+                           "Star": f"{x['nakshatra']} ({x['tara']})",
+                           "Moon": f"house {x['house_from_asc']}: {x['theme']}",
+                           "Notes": ", ".join(x["flags"]), "Good for": ", ".join(x["good_for"])}
+                          for x in r["days"]])
+    if ndays <= 7:
+        st.dataframe(table, hide_index=True, width="stretch")
+    else:
+        with st.expander("Day-by-day table", expanded=False):
+            st.dataframe(table, hide_index=True, width="stretch", height=560)
+    st.markdown("**Outlook by area**")
+    area_boxes([(a["area"] + f" – {a['verdict']}", a["why"], AREA_TONE[a["verdict"]]) for a in r["areas"]])
+    st.markdown("**Planets in this period**")
+    for t in r["transits"]:
+        st.markdown(f"- {t['text']} ({_fmt_day(ac.jd_to_local(t['start'], tz).date())} → "
+                    f"{_fmt_day(ac.jd_to_local(t['end'], tz).date())}; classical result from Moon: {t['classical']})")
+    if r["events"]:
+        st.markdown("**Key dates**")
+        st.dataframe(pd.DataFrame([{"Date": fmt(e["jd"], tz), "Event": e["event"]} for e in r["events"]]),
+                     hide_index=True, width="stretch")
+    st.caption("Overall rating: 60% average daily score, plus slow-planet transits (judged from both the Moon and "
+               "the Ascendant), Saturn cycles and the running dasha. 50 is neutral.")
+
+
+def show_year(d, tz):
+    r = pr.predict_year(ch, md_list, d, tz)
+    notes = sorted({n for m in r["months"] for n in m["notes"]})
+    cards([("Year rating", f"{r['rating']}/100", _verdict(r["rating"]), _tone(r["rating"])),
+           ("Best months", ", ".join(m["month"].strftime("%b %Y") for m in r["best"]), "highest ratings", "good"),
+           ("Months needing care", ", ".join(m["month"].strftime("%b %Y") for m in r["worst"]),
+            "lowest ratings", "bad"),
+           ("Saturn cycle", "; ".join(notes) or "None active", "Sade Sati / Ashtama / Kantaka")])
+    df = pd.DataFrame({"Month": [m["month"].strftime("%b %y") for m in r["months"]],
+                       "Rating": [m["rating"] for m in r["months"]]})
+    bar(df, "Month", "Rating", 240)
+    st.dataframe(pd.DataFrame([{"Month": m["month"].strftime("%b %Y"), "Rating": m["rating"],
+                                "Good days": m["good_days"], "Hard days": m["hard_days"],
+                                "Dasha": m["dasha"], "Top dates": ", ".join(x.strftime("%d %b") for x in m["best_days"]),
+                                "Notes": "; ".join(m["notes"])} for m in r["months"]]),
+                 hide_index=True, width="stretch")
+    st.markdown("**Outlook by area**")
+    area_boxes([(a["area"] + f" – {a['verdict']}", a["why"], AREA_TONE[a["verdict"]]) for a in r["areas"]])
+    st.markdown("**Dasha periods this year**")
+    for x in r["dashas"]:
+        st.markdown(f"- **{x['period']}** ({fmt(x['start'], tz)} → {fmt(x['end'], tz)}): {x['meaning']}")
+    st.markdown("**Major transits**")
+    for t in r["transits"]:
+        st.markdown(f"- {t['text']} ({fmt(t['start'], tz)} → {fmt(t['end'], tz)}; classical result from Moon: "
+                    f"{t['classical']})")
+    st.markdown("**Key dates**")
+    st.dataframe(pd.DataFrame([{"Date": fmt(e["jd"], tz), "Type": e["category"], "Event": e["event"]}
+                               for e in r["events"]]), hide_index=True, width="stretch", height=420)
+    st.caption("Monthly rating: 60% average daily score, plus slow-planet transits (from both the Moon and the "
+               "Ascendant), Saturn cycles and the running dasha. 50 is neutral.")
 
 
 with tabs[7]:
-    api_key = secret("ANTHROPIC_API_KEY")
-    if not api_key:
-        st.info("To enable questions, add ANTHROPIC_API_KEY to the app's secrets "
-                "(Streamlit Cloud: app menu → Settings → Secrets). See README.")
-    else:
-        c1, c2 = st.columns([2, 1])
-        other_names = c1.multiselect("Also include these people (for relationship or team questions)",
-                                     [n for n in sorted(profiles) if n != sel])
-        default_model = secret("ANTHROPIC_MODEL", llm_qa.MODELS[0])
-        model_opts = llm_qa.MODELS if default_model in llm_qa.MODELS else [default_model] + llm_qa.MODELS
-        model = c2.selectbox("Model", model_opts, index=model_opts.index(default_model))
-
-        today_local = datetime.now(ZoneInfo(tz0)).date()
-        others = [(get_chart(profiles[n]), dashas_for(chart_key(profiles[n]), get_chart(profiles[n]), year_len))
-                  for n in other_names]
-        with st.spinner("Preparing chart data..."):
-            ctx = ai_context(chart_key(prof), ch, md_list, tuple(chart_key(profiles[n]) for n in other_names),
-                             others, today_local.isoformat())
-
-        chats = st.session_state.setdefault("chats", {})
-        hist = chats.setdefault(sel, [])
-        st.caption("Answers are generated by an AI model from the app's own calculations. "
-                   "They are interpretations, not certainties.")
-        sugg = ["How does my week look for work and money?",
-                "What are my best and most difficult periods in the next 12 months?",
-                "Which dates suit signing an agreement this month?",
-                "What does my chart say about career and leadership?"]
-        sc = st.columns(len(sugg))
-        picked = None
-        for i, s in enumerate(sugg):
-            if sc[i].button(s, key=f"sugg_{i}", width="stretch"):
-                picked = s
-
-        for m in hist:
-            with st.chat_message(m["role"]):
-                st.markdown(m["content"])
-        q = st.chat_input(f"Ask about {sel}'s chart...") or picked
-        if q:
-            hist.append({"role": "user", "content": q})
-            with st.chat_message("user"):
-                st.markdown(q)
-            with st.chat_message("assistant"):
-                try:
-                    msgs = hist[-20:]
-                    answer = st.write_stream(llm_qa.stream_answer(api_key, model, ctx, msgs))
-                    hist.append({"role": "assistant", "content": answer if isinstance(answer, str) else str(answer)})
-                except Exception as e:  # noqa: BLE001
-                    hist.pop()
-                    st.error(f"The AI request failed: {e}")
-        cc1, cc2 = st.columns([1, 3])
-        if cc1.button("Clear conversation", disabled=not hist):
-            chats[sel] = []
+    c1, c2 = st.columns([1, 2])
+    pstart = c1.date_input("Starting from", value=date.today(), format="DD/MM/YYYY", key="pred_date")
+    with c2:
+        pla, plo, ptz = location_picker("pred", ch.place, (ch.lat, ch.lon, ch.tz))
+    kind = st.session_state.get("pred_kind")
+    bc = st.columns(4)
+    for i, lab in enumerate(["Day", "Week", "Month", "Year"]):
+        if bc[i].button(f"Predict {lab}", key=f"pred_btn_{lab}", width="stretch",
+                        type="primary" if kind == lab else "secondary"):
+            st.session_state.pred_kind = lab
             st.rerun()
-        with st.expander("See the chart data sent to the AI"):
-            st.code(ctx, language="text")
+    if not kind:
+        st.info("Choose Day, Week, Month or Year.")
+    else:
+        with st.spinner(f"Working out the {kind.lower()}..."):
+            if kind == "Day":
+                show_day(pstart, pla, plo, ptz)
+            elif kind == "Week":
+                show_range(pstart, 7, ptz)
+            elif kind == "Month":
+                show_range(pstart, 30, ptz)
+            else:
+                show_year(pstart, ptz)
+        st.caption("Predictions are built from traditional rules applied to this chart. They show tendencies "
+                   "and timing, not certainties.")
 
 # ---- About --------------------------------------------------------------------------
 with tabs[8]:
@@ -736,16 +841,16 @@ with tabs[8]:
 - Shadbala, Ashtakavarga and many rarer yogas are not included yet.
 - Not financial, legal, medical or relationship advice.
 
-### Ask AI
-The Ask AI tab sends the computed chart data shown in "See the chart data sent to the AI" to Anthropic's
-Claude API, together with your question. The model is instructed to interpret only that data. Answers are
-AI-generated interpretations and can be wrong; check important points against the other tabs.
+### Predictions
+Day, Week, Month and Year predictions are rule-based. They combine Tara Bala, Chandra Bala, tithi, the Moon's
+house, slow-planet transits judged from both the Moon and the Ascendant, Saturn cycles and the running dasha.
+Ratings use a 0-100 scale where 50 is neutral. No external AI service is used.
 
 ### Privacy and access
 - The app requires a password (APP_PASSWORD secret).
 - Birth details are personal data. Keep them in the PROFILES_JSON secret or import them per session.
   Never commit a profiles.json with real people's data to the repository.
-- Questions in Ask AI, and the chart data of the people selected, are sent to the Claude API.
+- All calculations run inside the app; no chart data is sent to outside services.
 """)
 
 st.caption("Traditional astrology for reflection and planning. Not a substitute for professional advice.")

@@ -1,7 +1,7 @@
 # CDS Astro – Jyotish Workbench
 
 A password-protected Streamlit app for Vedic astrology calculations, built on the Swiss Ephemeris
-(the same engine used by Jagannatha Hora, Parashara's Light and AstroSage), with an AI question-and-answer tab.
+(the same engine used by Jagannatha Hora, Parashara's Light and AstroSage), with Day, Week, Month and Year predictions.
 
 ## Features
 - **Birth chart** (South Indian style), D2/D3/D4/D7/D9/D10/D12, dignities, combustion, aspects, rule-based readings
@@ -13,17 +13,15 @@ A password-protected Streamlit app for Vedic astrology calculations, built on th
   best windows, 24 horas, transparent day rating
 - **Muhurta finder** by purpose, optionally checked for a second person
 - **Compatibility**: Ashtakoota (36), Mars dosha, professional synastry
-- **Ask AI**: chat with Claude about a chart. The app sends its own computed data (chart, dashas,
-  24 months of key dates, 14 days of daily factors, optional other people) so answers are grounded in real
-  calculations. The exact data sent is viewable in the tab.
+- **Predictions**: one-click Day, Week, Month and Year predictions. Rule-based (no external AI): Tara Bala,
+  Chandra Bala, tithi, Moon's house, slow-planet transits from both Moon and Ascendant, Saturn cycles and the
+  running dasha, with ratings, best and difficult days or months, outlook by life area, and key dates.
 - **Password protection** with a lock-out after repeated failures
 
 ## Secrets
 | Name | Required | Purpose |
 |---|---|---|
 | `APP_PASSWORD` | Yes | Sign-in password. The app stays locked if it is not set |
-| `ANTHROPIC_API_KEY` | For Ask AI | Claude API key from console.anthropic.com |
-| `ANTHROPIC_MODEL` | No | Default model (e.g. `claude-sonnet-5-5`) |
 | `PROFILES_JSON` | No | People to load automatically, as JSON (see `.streamlit/secrets.toml.example`) |
 
 ## Deploy on Streamlit Community Cloud
@@ -43,9 +41,9 @@ streamlit run app.py
 
 ## Privacy
 - Never commit `profiles.json` or `.streamlit/secrets.toml` (both are in `.gitignore`).
-- Ask AI sends the selected people's computed chart data and your question to the Claude API.
+- All calculations run inside the app; no chart data is sent to outside services.
 
 ## Accuracy notes
 - Positions match Jagannatha Hora / AstroSage to within about 0.01° with the same settings.
 - Differences between programs come from ayanamsa, true vs mean node, and dasha year length.
-- Interpretations (rule-based and AI) describe traditional principles, not certainties.
+- Interpretations describe traditional principles, not certainties.
