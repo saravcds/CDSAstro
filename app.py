@@ -357,7 +357,7 @@ st.caption(f"Born {ch.dt_local.strftime('%d %b %Y, %H:%M')} · {ch.place or f'{c
            f"{ch.tz} · {ayan} ayanamsa {ch.ayan_value:.4f}° · {node} node")
 
 tabs = st.tabs(["Birth chart", "Dashas", "Yogas & Jaimini", "Transits & key dates", "Daily",
-                "Muhurta finder", "Compatibility", "Predictions", "About"])
+                "Muhurta finder", "Compatibility", "Predictions", "Life reading", "About"])
 
 # ---- Birth chart ------------------------------------------------------------
 with tabs[0]:
@@ -845,8 +845,94 @@ with tabs[7]:
         st.caption("Predictions are built from traditional rules applied to this chart. They show tendencies "
                    "and timing, not certainties.")
 
-# ---- About --------------------------------------------------------------------------
+# ---- Life reading -------------------------------------------------------------------
+import life  # noqa: E402
+
+
+@st.cache_data(show_spinner=False)
+def life_for(key, _ch, _md, day_iso):
+    return life.life_reading(_ch, _md, ac.to_jd(datetime.fromisoformat(day_iso + "T12:00"), _ch.tz))
+
+
+RATING_ICON = {"Good": "🟢 Good", "Mixed": "🟡 Mixed", "Challenging": "🔴 Challenging"}
+STAR_TONE = {5: "good", 4: "good", 3: "mixed", 2: "bad", 1: "bad"}
+
 with tabs[8]:
+    today_iso = datetime.now(ZoneInfo(tz0)).date().isoformat()
+    with st.spinner("Building the life reading..."):
+        lr = life_for(chart_key(prof), ch, md_list, today_iso)
+    st.subheader(f"Life reading: {ch.name}")
+    chain_txt = " – ".join(p.lord for p in lr["chain"][:2]) if lr["chain"] else "-"
+    cards([("Ascendant", ac.SIGNS[ch.asc_sign], ac.NAKSHATRAS[ac.nak_of(ch.asc)]),
+           ("Moon / birth star", f"{ac.SIGNS[ch.moon_sign]} · {ac.NAKSHATRAS[ch.moon_nak]}", "emotional nature"),
+           ("Strongest planet", lr["strengths"][0][1], ch.planets[lr["strengths"][0][1]]["dignity"].lower()),
+           ("Running period", chain_txt, "Mahadasha – Antardasha")])
+    st.markdown("#### Summary")
+    for s_ in lr["summary"]:
+        st.markdown(f"- {s_}")
+
+    st.markdown("#### Life areas")
+    cards([(name, "★" * a["stars"] + "☆" * (5 - a["stars"]), a["verdict"], STAR_TONE[a["stars"]])
+           for name, a in lr["areas"].items()])
+    for name, a in lr["areas"].items():
+        with st.expander(f"{name}: {'★' * a['stars']}{'☆' * (5 - a['stars'])} {a['verdict']}", expanded=name == "Life"):
+            for d_ in a["details"]:
+                st.markdown(f"- {d_}")
+            c1, c2 = st.columns(2)
+            with c1:
+                st.markdown("**Strengths**")
+                for x in a["strengths"] or ["No strong supporting factor."]:
+                    st.markdown(f"- {x}")
+            with c2:
+                st.markdown("**Watch points**")
+                for x in a["cautions"] or ["No major weakness."]:
+                    st.markdown(f"- {x}")
+            rows = ([{"Period": p["event"], "From": fmt(p["start"], tz0), "To": fmt(p["end"], tz0),
+                      "Outlook": RATING_ICON[p["rating"]]} for p in a["good_periods"]]
+                    + [{"Period": p["event"], "From": fmt(p["start"], tz0), "To": fmt(p["end"], tz0),
+                        "Outlook": RATING_ICON[p["rating"]]} for p in a["hard_periods"]])
+            if rows:
+                st.markdown("**Key periods ahead for this area**")
+                st.dataframe(pd.DataFrame(rows).sort_values("From", key=lambda c: pd.to_datetime(c, format="%d %b %Y")),
+                             hide_index=True, width="stretch")
+            if name == "Health":
+                st.caption("Astrological indications only, not medical advice.")
+
+    st.markdown("#### Life-changing periods and dates")
+    c1, c2, c3 = st.columns([1, 2, 2])
+    upcoming = c1.toggle("Upcoming only", value=True)
+    kinds = c2.multiselect("Show", ["Dasha", "Transit", "Eclipse"], default=["Dasha", "Transit", "Eclipse"])
+    ratings = c3.multiselect("Outlook", ["Good", "Mixed", "Challenging"], default=["Good", "Mixed", "Challenging"])
+    now_j = ac.to_jd(datetime.now(ZoneInfo(tz0)).replace(tzinfo=None), tz0)
+    birth_year = ch.dt_local.year
+    ev_rows = []
+    for e in lr["events"]:
+        if upcoming and e["end"] < now_j:
+            continue
+        if e["kind"] not in kinds or e["rating"] not in ratings:
+            continue
+        sd = ac.jd_to_local(e["start"], tz0)
+        age = sd.year - birth_year - ((sd.month, sd.day) < (ch.dt_local.month, ch.dt_local.day))
+        ev_rows.append({"From": sd.strftime("%d %b %Y"), "To": fmt(e["end"], tz0), "Age": age,
+                        "Event": e["event"], "Outlook": RATING_ICON[e["rating"]], "Areas": e["areas"],
+                        "Guidance": e["guidance"],
+                        "Now": "▶" if e["start"] <= now_j < e["end"] else ""})
+    df_ev = pd.DataFrame(ev_rows)
+    if df_ev.empty:
+        st.info("No periods match the filters.")
+    else:
+        st.dataframe(df_ev[["Now", "From", "To", "Age", "Event", "Outlook", "Guidance", "Areas"]],
+                     hide_index=True, width="stretch", height=560,
+                     column_config={"Guidance": st.column_config.TextColumn(width="large"),
+                                    "Event": st.column_config.TextColumn(width="large")})
+        st.download_button("Download table (CSV)", df_ev.to_csv(index=False).encode("utf-8"),
+                           file_name=f"{ch.name}_life_periods.csv", mime="text/csv")
+    st.caption("Dasha periods are rated from the functional nature and strength of the period lords and their "
+               "placement from each other. Transit milestones and eclipses on key natal points are added. "
+               "Ratings show tendencies, not certainties.")
+
+# ---- About --------------------------------------------------------------------------
+with tabs[9]:
     st.markdown("""
 ### What this app calculates
 - **Positions:** Swiss Ephemeris (built-in Moshier ephemeris), sidereal, with your chosen ayanamsa and node.
@@ -861,6 +947,12 @@ with tabs[8]:
 - **Daily:** panchang, Tara Bala, Chandra Bala, Rahu Kalam, Yamagandam, Gulika, Abhijit, 24 horas.
 - **Muhurta:** search for windows by purpose.
 - **Compatibility:** Ashtakoota (36 points), Mars dosha, and a professional synastry view.
+
+### Life reading
+A rule-based profile by life area (Life, Health, Career, Wealth, Children, Marriage). Each area combines the
+strength of its houses (lord placement and dignity, planets in and aspecting the house), its natural
+significators and the relevant divisional chart (D7, D9, D10). The lifetime table rates every antardasha and
+adds Sade Sati, Ashtama Shani, Saturn, Jupiter and Rahu returns, and eclipses on key natal points.
 
 ### Limits
 - No software can give perfect predictions. Interpretations here are rule-based summaries of traditional
