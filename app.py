@@ -10,6 +10,7 @@ import pandas as pd
 import streamlit as st
 
 import astro_core as ac
+from storage import Storage
 
 st.set_page_config(page_title="Jyotish Workbench", page_icon="🪐", layout="wide")
 
@@ -120,28 +121,44 @@ OTHER = "Other (enter coordinates)"
 TZ_OPTIONS = sorted({v[2] for v in CITIES.values()} | {"UTC", "Asia/Kathmandu", "Asia/Colombo",
                                                          "Europe/Amsterdam", "America/Los_Angeles",
                                                          "America/Chicago", "Australia/Sydney"})
-PROFILE_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "profiles.json")
+# ---------------------------------------------------------------------------
+# Profiles and persistent storage
+# ---------------------------------------------------------------------------
+store = Storage(secret("GITHUB_TOKEN"), secret("GITHUB_DATA_REPO"),
+                secret("GITHUB_DATA_PATH", "profiles.json"), secret("GITHUB_DATA_BRANCH"))
+ON_CLOUD = bool(os.environ.get("STREAMLIT_SHARING_MODE") or os.path.isdir("/mount/src"))
 
 
-# ---------------------------------------------------------------------------
-# Profiles
-# ---------------------------------------------------------------------------
+def seed_profiles() -> dict:
+    raw = secret("PROFILES_JSON")
+    if not raw:
+        return {}
+    try:
+        return json.loads(raw) if isinstance(raw, str) else {k: dict(v) for k, v in dict(raw).items()}
+    except Exception:
+        st.warning("PROFILES_JSON secret could not be read as JSON.")
+        return {}
+
 
 def load_profiles() -> dict:
-    """Profiles come from the PROFILES_JSON secret (private, persistent) and/or a local profiles.json."""
-    out = {}
-    raw = secret("PROFILES_JSON")
-    if raw:
-        try:
-            out.update(json.loads(raw) if isinstance(raw, str) else dict(raw))
-        except Exception:
-            st.warning("PROFILES_JSON secret could not be read as JSON.")
+    """Saved profiles win; the PROFILES_JSON secret only seeds storage the first time."""
     try:
-        with open(PROFILE_FILE, encoding="utf-8") as f:
-            out.update(json.load(f))
-    except Exception:
-        pass
-    return out
+        saved = store.load()
+    except Exception as e:  # noqa: BLE001
+        st.session_state.storage_error = f"Could not read saved people: {e}"
+        saved = None
+    return saved if saved is not None else seed_profiles()
+
+
+def persist(message: str) -> bool:
+    """Save all profiles. Returns True on success and records any error for the sidebar."""
+    try:
+        store.save(st.session_state.profiles, message)
+        st.session_state.pop("storage_error", None)
+        return True
+    except Exception as e:  # noqa: BLE001
+        st.session_state.storage_error = f"Save failed: {e}"
+        return False
 
 
 if "profiles" not in st.session_state:
@@ -161,8 +178,18 @@ def hm(jd: float, tz: str) -> str:
 with st.sidebar:
     st.title("🪐 Jyotish Workbench")
     names = sorted(profiles)
-    sel = st.selectbox("Person", names, index=0 if names else None,
-                       placeholder="Add a person below") if names else None
+    if "pending_sel" in st.session_state:
+        st.session_state.person_sel = st.session_state.pop("pending_sel")
+    if st.session_state.get("person_sel") not in names:
+        st.session_state.pop("person_sel", None)
+    sel = st.selectbox("Person", names, key="person_sel") if names else None
+    if not store.is_github and ON_CLOUD:
+        st.warning("New people are kept only until the app restarts. Set up GitHub storage "
+                   "(GITHUB_TOKEN and GITHUB_DATA_REPO secrets) to save them permanently.")
+    if st.session_state.get("storage_error"):
+        st.error(st.session_state.storage_error)
+    if st.session_state.get("flash"):
+        st.success(st.session_state.pop("flash"))
 
     with st.expander("Add or edit a person", expanded=not names):
         base = profiles.get(sel, {}) if (sel and st.checkbox("Edit selected person", value=False)) else {}
@@ -188,33 +215,34 @@ with st.sidebar:
             place = city
             st.caption(f"{lat:.4f}, {lon:.4f} · {tz}")
         if st.button("Save person", type="primary", width="stretch", disabled=not nm.strip()):
-            profiles[nm.strip()] = dict(name=nm.strip(), date=bd.isoformat(), time=bt.strftime("%H:%M"),
-                                        lat=lat, lon=lon, tz=tz, place=place)
-            st.success(f"Saved {nm.strip()}")
+            name = nm.strip()
+            profiles[name] = dict(name=name, date=bd.isoformat(), time=bt.strftime("%H:%M"),
+                                  lat=lat, lon=lon, tz=tz, place=place)
+            if persist(f"Save {name}"):
+                st.session_state.flash = f"Saved {name} to {store.label}."
+            st.session_state.pending_sel = name
             st.rerun()
         if sel and st.button(f"Delete {sel}", width="stretch"):
             profiles.pop(sel, None)
+            if persist(f"Delete {sel}"):
+                st.session_state.flash = f"Deleted {sel}."
             st.rerun()
 
     with st.expander("Import / export profiles"):
         up = st.file_uploader("Import profiles.json", type="json")
-        if up is not None:
+        if up is not None and st.button("Add these people", width="stretch"):
             try:
                 data = json.load(up)
                 profiles.update(data)
-                st.success(f"Imported {len(data)} profile(s)")
+                if persist(f"Import {len(data)} profile(s)"):
+                    st.session_state.flash = f"Imported and saved {len(data)} profile(s)."
+                st.rerun()
             except Exception as e:  # noqa: BLE001
                 st.error(f"Could not read file: {e}")
         st.download_button("Download profiles.json", json.dumps(profiles, indent=2),
                            file_name="profiles.json", mime="application/json",
                            width="stretch", disabled=not profiles)
-        if st.button("Save to server file", width="stretch", disabled=not profiles):
-            try:
-                with open(PROFILE_FILE, "w", encoding="utf-8") as f:
-                    json.dump(profiles, f, indent=2)
-                st.success("Saved. Note: on Streamlit Cloud this file resets on redeploy.")
-            except Exception as e:  # noqa: BLE001
-                st.error(str(e))
+        st.caption(f"Saving to: {store.label}")
 
     st.header("Settings")
     ayan = st.selectbox("Ayanamsa", list(ac.AYANAMSAS), index=0)

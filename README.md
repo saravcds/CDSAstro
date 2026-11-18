@@ -22,7 +22,10 @@ A password-protected Streamlit app for Vedic astrology calculations, built on th
 | Name | Required | Purpose |
 |---|---|---|
 | `APP_PASSWORD` | Yes | Sign-in password. The app stays locked if it is not set |
-| `PROFILES_JSON` | No | People to load automatically, as JSON (see `.streamlit/secrets.toml.example`) |
+| `GITHUB_TOKEN` | For saving people | Fine-grained GitHub token with **Contents: Read and write** on the data repo only |
+| `GITHUB_DATA_REPO` | For saving people | Private repo that stores the people file, e.g. `saravcds/cdsastro-data` |
+| `GITHUB_DATA_PATH` | No | File path in that repo (default `profiles.json`) |
+| `PROFILES_JSON` | No | Starting list of people, used only until the first save (see `.streamlit/secrets.toml.example`) |
 
 ## Deploy on Streamlit Community Cloud
 1. Go to https://share.streamlit.io and sign in with GitHub.
