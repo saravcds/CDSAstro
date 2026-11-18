@@ -357,7 +357,7 @@ st.caption(f"Born {ch.dt_local.strftime('%d %b %Y, %H:%M')} · {ch.place or f'{c
            f"{ch.tz} · {ayan} ayanamsa {ch.ayan_value:.4f}° · {node} node")
 
 tabs = st.tabs(["Birth chart", "Dashas", "Yogas & Jaimini", "Transits & key dates", "Daily",
-                "Muhurta finder", "Compatibility", "Predictions", "Life reading", "About"])
+                "Muhurta finder", "Compatibility", "Predictions", "Life reading", "Past life", "About"])
 
 # ---- Birth chart ------------------------------------------------------------
 with tabs[0]:
@@ -931,8 +931,58 @@ with tabs[8]:
                "placement from each other. Transit milestones and eclipses on key natal points are added. "
                "Ratings show tendencies, not certainties.")
 
-# ---- About --------------------------------------------------------------------------
+# ---- Past life ----------------------------------------------------------------------
+import pastlife  # noqa: E402
+
 with tabs[9]:
+    pl = pastlife.past_life_report(ch)
+    st.subheader(f"Past life report: {ch.name}")
+    K, R = ch.planets["Ketu"], ch.planets["Rahu"]
+    cards([("Past life (Ketu)", f"House {K['house']} · {ac.SIGNS[K['sign']]}", ac.NAKSHATRAS[K["nak"]]),
+           ("This life (Rahu)", f"House {R['house']} · {ac.SIGNS[R['sign']]}", ac.NAKSHATRAS[R["nak"]]),
+           ("Soul planet", pl["ak"], f"Karakamsa {pl['karakamsa']}"),
+           ("Past merit", "★" * pl["punya_stars"] + "☆" * (5 - pl["punya_stars"]), "5th and 9th houses",
+            "good" if pl["punya_stars"] >= 4 else "mixed" if pl["punya_stars"] == 3 else "bad"),
+           ("Ishta Devata", pl["ishta"][1], f"from {pl['ishta'][0]}")])
+    st.markdown("#### Summary")
+    for x in pl["summary"]:
+        st.markdown(f"- {x}")
+    c1, c2 = st.columns(2)
+    with c1:
+        st.markdown("#### Who you were (Ketu)")
+        st.markdown(pl["ketu"])
+    with c2:
+        st.markdown("#### What you came to learn (Rahu)")
+        st.markdown(pl["rahu"])
+    st.info(pl["axis"])
+    c1, c2 = st.columns(2)
+    with c1:
+        st.markdown("#### The soul's lesson (Atmakaraka)")
+        st.markdown(f"**{pl['ak']}**: {pl['ak_text']}.")
+        st.markdown(f"**Karakamsa {pl['karakamsa']}**: {pl['karakamsa_text']}.")
+    with c2:
+        st.markdown("#### Merit carried forward (Purva Punya)")
+        st.markdown(pl["punya_text"])
+    st.markdown("#### Karmic work in this life")
+    st.markdown(f"- {pl['saturn']}")
+    for p_, t_ in pl["retro"]:
+        st.markdown(f"- {p_} retrograde: {t_}.")
+    st.markdown("#### Karmic debts (Rinas)")
+    if pl["debts"]:
+        st.dataframe(pd.DataFrame([{"Debt": d["debt"], "Indicated by": d["why"], "Remedy": d["remedy"]}
+                                   for d in pl["debts"]]), hide_index=True, width="stretch")
+    else:
+        st.markdown("No classical karmic-debt pattern is strongly indicated.")
+    st.markdown("#### Liberation and spiritual path (12th house)")
+    st.markdown(pl["moksha"]["text"] + (f" Planets in the 12th: {', '.join(pl['moksha']['in12'])}."
+                                        if pl["moksha"]["in12"] else ""))
+    st.markdown(f"**Suggested practice:** regular worship of **{pl['ishta'][1]}**; Ganesha for Ketu's themes, "
+                f"Durga for Rahu's, and service or charity for Saturn's.")
+    st.caption("Past-life readings are symbolic and traditional. They cannot be verified and are best used "
+               "for reflection on patterns and lessons, not as fact.")
+
+# ---- About --------------------------------------------------------------------------
+with tabs[10]:
     st.markdown("""
 ### What this app calculates
 - **Positions:** Swiss Ephemeris (built-in Moshier ephemeris), sidereal, with your chosen ayanamsa and node.
@@ -953,6 +1003,11 @@ A rule-based profile by life area (Life, Health, Career, Wealth, Children, Marri
 strength of its houses (lord placement and dignity, planets in and aspecting the house), its natural
 significators and the relevant divisional chart (D7, D9, D10). The lifetime table rates every antardasha and
 adds Sade Sati, Ashtama Shani, Saturn, Jupiter and Rahu returns, and eclipses on key natal points.
+
+### Past life
+Uses Ketu (past-life skills), Rahu (this life's direction), the Jaimini Atmakaraka and Karakamsa, the Ishta
+Devata (12th from Karakamsa), the 5th and 9th houses (past merit), Saturn and retrograde planets (karmic work),
+classical karmic-debt patterns (Rinas) and the 12th house. Symbolic and traditional; not verifiable.
 
 ### Limits
 - No software can give perfect predictions. Interpretations here are rule-based summaries of traditional
