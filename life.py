@@ -110,6 +110,10 @@ def planet_strength(ch: ac.Chart, p: str) -> float:
     s += 1 if h in KENDRA | TRIKONA else 0.5 if h == 11 else -1 if h in DUSTHANA else 0
     if P["combust"]:
         s -= 1
+    if p in ("Sun", "Moon", "Mars", "Mercury", "Jupiter", "Venus", "Saturn"):
+        import shadbala
+        r = shadbala.cached(ch)["planets"][p]["ratio"]
+        s += max(-1.5, min(1.5, (r - 1.0) * 4))  # classical six-fold strength
     return s
 
 
@@ -156,7 +160,8 @@ def house_strength(ch: ac.Chart, h: int) -> tuple[float, list[tuple[float, str]]
 
 
 def _stars(score: float) -> int:
-    return int(max(1, min(5, round(3 + score / 2.5))))
+    # centred so that an average area (score about 2) gets 3 stars; 5 stars are kept for clearly strong areas
+    return int(max(1, min(5, int(3 + (score - 2) / 2.5 + 0.5))))
 
 
 VERDICT = {5: "Very strong", 4: "Strong", 3: "Steady / mixed", 2: "Needs care", 1: "Challenging"}

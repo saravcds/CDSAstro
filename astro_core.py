@@ -1034,31 +1034,81 @@ MUHURTA_PURPOSES = {
         naks={"Ashwini", "Rohini", "Mrigashira", "Punarvasu", "Pushya", "Uttara Phalguni",
               "Hasta", "Chitra", "Swati", "Anuradha", "Uttara Ashadha", "Shravana",
               "Dhanishta", "Shatabhisha", "Uttara Bhadrapada", "Revati"},
-        days={0, 2, 3, 4}, avoid_merc_retro=False),
+        days={0, 2, 3, 4}, avoid_merc_retro=False, lagna="any"),
     "Business deal / contract signing": dict(
         naks={"Ashwini", "Rohini", "Mrigashira", "Punarvasu", "Pushya", "Uttara Phalguni",
               "Hasta", "Chitra", "Swati", "Anuradha", "Uttara Ashadha", "Shravana",
               "Dhanishta", "Shatabhisha", "Uttara Bhadrapada", "Revati"},
-        days={0, 2, 3, 4}, avoid_merc_retro=True),
+        days={0, 2, 3, 4}, avoid_merc_retro=True, lagna="fixed_dual"),
     "Property purchase / registration": dict(
         naks={"Rohini", "Mrigashira", "Punarvasu", "Pushya", "Uttara Phalguni", "Hasta",
               "Chitra", "Swati", "Anuradha", "Uttara Ashadha", "Shravana", "Dhanishta",
               "Shatabhisha", "Uttara Bhadrapada", "Revati"},
-        days={0, 2, 3, 4}, avoid_merc_retro=True),
+        days={0, 2, 3, 4}, avoid_merc_retro=True, lagna="fixed"),
     "Joining a job / new role / hiring": dict(
         naks={"Ashwini", "Rohini", "Mrigashira", "Pushya", "Uttara Phalguni", "Hasta",
               "Chitra", "Anuradha", "Uttara Ashadha", "Shravana", "Revati"},
-        days={0, 2, 3, 4, 6}, avoid_merc_retro=False),
+        days={0, 2, 3, 4, 6}, avoid_merc_retro=False, lagna="fixed_dual"),
     "Travel": dict(
         naks={"Ashwini", "Mrigashira", "Punarvasu", "Pushya", "Hasta", "Anuradha",
               "Shravana", "Dhanishta", "Revati"},
-        days={0, 2, 3, 4}, avoid_merc_retro=False),
+        days={0, 2, 3, 4}, avoid_merc_retro=False, lagna="movable_dual"),
     "Wearing gemstone / crystal": dict(
         naks={"Ashwini", "Rohini", "Pushya", "Uttara Phalguni", "Hasta", "Chitra",
               "Anuradha", "Uttara Ashadha", "Shravana", "Dhanishta",
               "Uttara Bhadrapada", "Revati"},
-        days={0, 2, 3, 4, 6}, avoid_merc_retro=False),
+        days={0, 2, 3, 4, 6}, avoid_merc_retro=False, lagna="any"),
 }
+SIGN_TYPE = {s: ("movable", "fixed", "dual")[s % 3] for s in range(12)}
+LAGNA_RULE_TEXT = {"fixed": "a fixed rising sign (for lasting results)",
+                   "fixed_dual": "a fixed or dual rising sign (for stable results)",
+                   "movable_dual": "a movable or dual rising sign (for movement)", "any": "any rising sign"}
+
+
+def lagna_at(jd: float, lat: float, lon: float, ayanamsa: str) -> float:
+    set_ayanamsa(ayanamsa)
+    try:
+        return swe.houses_ex(jd, lat, lon, b"P", swe.FLG_SIDEREAL | EPH)[1][0] % 360
+    except Exception:
+        return swe.houses_ex(jd, lat, lon, b"O", swe.FLG_SIDEREAL | EPH)[1][0] % 360
+
+
+def muhurta_lagna_check(ch: Chart, jd: float, lat: float, lon: float, rule: str,
+                        moon_lon: float, pos: dict) -> tuple[bool, int, list[str]]:
+    """Classical checks on the rising sign at the chosen moment. Returns (passes, quality 0-100, notes)."""
+    asc = sign_of(lagna_at(jd, lat, lon, ch.ayanamsa))
+    notes, q = [], 60
+    t = SIGN_TYPE[asc]
+    if rule == "fixed" and t != "fixed" or rule == "fixed_dual" and t == "movable" \
+            or rule == "movable_dual" and t == "fixed":
+        return False, 0, ["rising sign type not suited to the purpose"]
+    if _house_from(ch.asc_sign, asc) in (8, 12) or _house_from(ch.moon_sign, asc) in (8, 12):
+        return False, 0, ["rising sign is 8th/12th from the birth chart"]
+    occ = {p: _house_from(asc, sign_of(v)) for p, v in pos.items()}
+    occ["Moon"] = _house_from(asc, sign_of(moon_lon))
+    if any(occ[p] == 8 for p in ("Sun", "Mars", "Saturn", "Rahu", "Ketu", "Moon")):
+        return False, 0, ["malefic or Moon in the 8th house of the moment"]
+    if any(occ[p] == 8 for p in ("Jupiter", "Venus", "Mercury")):
+        q -= 15
+        notes.append("8th house not empty")
+    if any(occ[p] == 1 for p in ("Mars", "Saturn", "Rahu", "Ketu")):
+        return False, 0, ["malefic on the rising sign"]
+    if occ["Moon"] in (6, 8, 12):
+        return False, 0, ["Moon in 6/8/12 from the rising sign"]
+    for p in ("Jupiter", "Venus", "Mercury"):
+        if occ[p] in (1, 4, 7, 10, 5, 9):
+            q += 10
+            notes.append(f"{p} well placed")
+    lord = SIGN_LORD[asc]
+    lh = occ.get(lord, 1)
+    if lh in (6, 8, 12):
+        q -= 15
+        notes.append("rising-sign lord weak")
+    elif lh in (1, 4, 5, 7, 9, 10, 11):
+        q += 5
+    if any(occ[p] in (3, 6, 11) for p in ("Saturn", "Mars")):
+        q += 5
+    return True, max(0, min(100, q)), notes
 
 
 def eclipse_jds(j0: float, j1: float) -> list[float]:
@@ -1077,7 +1127,8 @@ def eclipse_jds(j0: float, j1: float) -> list[float]:
 def find_muhurtas(ch: Chart, purpose: str, d0: date, d1: date, lat: float,
                   lon: float, tz: str, shukla_only: bool = False,
                   avoid_ashtami: bool = True, avoid_eclipse_days: int = 3,
-                  second: Chart | None = None, hours: tuple[int, int] = (7, 19)) -> list[dict]:
+                  second: Chart | None = None, hours: tuple[int, int] = (7, 19),
+                  strict_lagna: bool = True) -> list[dict]:
     cfg = MUHURTA_PURPOSES[purpose]
     j0 = to_jd(datetime(d0.year, d0.month, d0.day), tz)
     j1 = to_jd(datetime(d1.year, d1.month, d1.day, 23, 59), tz)
@@ -1096,9 +1147,11 @@ def find_muhurtas(ch: Chart, purpose: str, d0: date, d1: date, lat: float,
             d += timedelta(days=1)
             continue
         bad = [pc["rahu_kalam"], pc["yamagandam"], pc["gulika"]]
+        noon_jd = (pc["sunrise"] + pc["sunset"]) / 2
+        pos = {p: sidereal_lon(noon_jd, p, ch.ayanamsa, ch.node)[0] for p in PLANETS if p != "Moon"}
         lo = to_jd(datetime(d.year, d.month, d.day, hours[0]), tz)
         hi = to_jd(datetime(d.year, d.month, d.day, hours[1]), tz)
-        t, step = max(lo, pc["sunrise"]), 1 / 48
+        t, step = max(lo, pc["sunrise"]), 1 / 96
         wins, cur = [], None
         while t + step <= min(hi, pc["sunset"]) + 1e-9:
             m = (t + step / 2)
@@ -1118,21 +1171,31 @@ def find_muhurtas(ch: Chart, purpose: str, d0: date, d1: date, lat: float,
             ok &= hs not in (8, 12)
             ok &= _house_from(ch.moon_sign, sign_of(mlon)) != 8
             ok &= not any(not (t + step <= b0 or t >= b1) for b0, b1 in bad)
+            lq, lnotes, lsign = 0, [], None
             if ok:
-                if cur and abs(cur[1] - t) < 1e-6:
+                ok, lq, lnotes = muhurta_lagna_check(ch, m, lat, lon, cfg.get("lagna", "any"), mlon, pos)
+                if not ok and not strict_lagna:
+                    ok, lq = True, 20
+                lsign = sign_of(lagna_at(m, lat, lon, ch.ayanamsa))
+            if ok:
+                key = (NAKSHATRAS[nk], tara_of(ch.moon_nak, nk)[0], tt, hs, lsign, lq, tuple(lnotes))
+                if cur and abs(cur[1] - t) < 1e-6 and cur[2][4] == lsign:
                     cur = (cur[0], t + step, cur[2])
                 else:
                     if cur:
                         wins.append(cur)
-                    cur = (t, t + step, (NAKSHATRAS[nk], tara_of(ch.moon_nak, nk)[0], tt, hs))
+                    cur = (t, t + step, key)
+            elif cur:
+                wins.append(cur)
+                cur = None
             t += step
         if cur:
             wins.append(cur)
-        for s, e, (nk, tr, tt, hs) in wins:
-            if e - s >= 1 / 24 - 1e-6:
+        for s, e, (nk, tr, tt, hs, ls, lq, ln) in wins:
+            if e - s >= 1 / 48 - 1e-6:
                 results.append(dict(date=d, start=s, end=e, nakshatra=nk, tara=tr,
-                                    tithi=tithi_name(tt), moon_house=hs,
-                                    weekday=d.strftime("%a")))
+                                    tithi=tithi_name(tt), moon_house=hs, lagna=SIGNS[ls],
+                                    quality=lq, lagna_notes=list(ln), weekday=d.strftime("%a")))
         d += timedelta(days=1)
     return results
 

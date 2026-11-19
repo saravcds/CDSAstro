@@ -2,3 +2,4 @@ streamlit>=1.46
 pyswisseph>=2.10.3
 pandas>=2.0
 requests>=2.31
+reportlab>=4.0

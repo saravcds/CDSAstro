@@ -293,35 +293,38 @@ def strongest_areas(ch, n: int = 3) -> list[int]:
 
 
 def planet_lines(ch) -> list[tuple[str, str, str]]:
-    """(planet, plain sentence, tone) for each planet."""
+    """(title, plain meaning, tone) for each planet: where it is and what it means for the person."""
+    import planet_text as PT
+    import shadbala as SB
+    sbv = SB.cached(ch)["planets"]
     out = []
     for p in ac.PLANETS:
         d = ch.planets[p]
-        dig = d["dignity"]
-        where = HOUSE_PLAIN[d["house"]]
-        rules = [HOUSE_SHORT[h] for h in ch.houses_owned(p) if h != d["house"]]
-        if dig == "Exalted" and p in ("Rahu", "Ketu"):
-            q, t = "is well placed here", "good"
-        elif dig == "Exalted":
-            q, t = "is very strong here and gives excellent results", "good"
-        elif dig == "Own sign":
-            q, t = "is strong here, in its own sign", "good"
-        elif dig == "Debilitated":
-            q, t = "is weak here; results come after effort, and remedies help", "bad"
-        elif dig.startswith("Friendly"):
-            q, t = "is comfortable here", "good"
-        elif dig.startswith("Enemy"):
-            q, t = "is uncomfortable here, so results can be uneven", "mixed"
+        h = d["house"]
+        title = f"{p} in your {PT.HOUSE_ORD[h]} house ({PT.AREA[h]})"
+        txt = PT.PIH[p][h]
+        if p in sbv:
+            w = SB.strength_word(sbv[p]["ratio"])
+            if d["dignity"] == "Exalted" and w in ("average", "weak"):
+                w = "strong"
+            if d["dignity"] == "Debilitated" and w in ("strong", "very strong"):
+                w = "average"
         else:
-            q, t = "gives average results here", ""
-        txt = f"{PLANET_PLAIN[p][0].upper() + PLANET_PLAIN[p][1:]} sits in your area of {where} and {q}."
+            w = "strong" if d["dignity"] == "Exalted" else "average"
+        tone = "good" if w in ("strong", "very strong") else "bad" if w == "weak" else "mixed"
+        nm = f"The {p}" if p in ("Sun", "Moon") else p
+        txt += {"very strong": f" {nm} is very strong in your chart, so these results come easily.",
+                "strong": f" {nm} is strong in your chart, so these results come well.",
+                "average": f" {nm} has average strength in your chart, so results come with steady effort.",
+                "weak": f" {nm} is weak in your chart, so these results need more effort. Remedy: {REMEDY[p]}"}[w]
+        rules = [HOUSE_SHORT[x] for x in ch.houses_owned(p) if x != h]
         if rules:
             txt += f" It also looks after your {_and(rules)}."
         if d["retro"]:
-            txt += " It is retrograde, so its results tend to come later or after a second attempt."
+            txt += " It is retrograde, so its results often come later or after a second try."
         if d["combust"]:
-            txt += " It is very close to the Sun, so its strength is partly hidden."
-        out.append((p, txt, t))
+            txt += " It is very close to the Sun, so its results can stay in the background."
+        out.append((title, txt, tone))
     return out
 
 

@@ -342,6 +342,8 @@ import life  # noqa: E402
 import pastlife  # noqa: E402
 import predict as pr  # noqa: E402
 import simple_text as T  # noqa: E402
+import shadbala  # noqa: E402
+import varsha  # noqa: E402
 
 ICON = {"good": "🟢", "bad": "🔴", "mixed": "🟡", "care": "🟠", "": "⚪"}
 
@@ -451,6 +453,20 @@ with tabs[0]:
             st.markdown(f"- {x}")
     st.markdown("#### Your planets in simple words")
     plain_list(T.planet_lines(ch))
+    st.markdown("#### How strong each planet is")
+    _sbr = shadbala.cached(ch)["planets"]
+    import altair as alt
+    _df = pd.DataFrame([{"Planet": p_, "Strength": round(v["ratio"] * 100),
+                         "Level": shadbala.strength_word(v["ratio"]).capitalize()} for p_, v in _sbr.items()])
+    _c = (alt.Chart(_df).mark_bar(cornerRadiusTopRight=3, cornerRadiusBottomRight=3)
+          .encode(y=alt.Y("Planet:N", sort="-x", title=None), x=alt.X("Strength:Q", title="% of the classical minimum"),
+                  color=alt.Color("Level:N", scale=alt.Scale(domain=["Very strong", "Strong", "Average", "Weak"],
+                                                              range=["#15803d", "#22c55e", "#d97706", "#dc2626"]),
+                                  legend=alt.Legend(orient="top", title=None)),
+                  tooltip=["Planet", "Strength", "Level"]).properties(height=230))
+    st.altair_chart(_c + alt.Chart(pd.DataFrame({"x": [100]})).mark_rule(strokeDash=[4, 4]).encode(x="x:Q"),
+                    width="stretch")
+    st.caption("Classical six-fold strength (Shadbala). 100% is the minimum a planet needs to give its full results.")
     st.markdown("#### Lucky for you")
     lucky_box(rep["lucky"])
     st.caption("Gemstones are traditional; please consult an astrologer before wearing one.")
@@ -507,6 +523,18 @@ with tabs[0]:
                            "Sub lord": sub, "Sub-sub": ss})
             st.dataframe(pd.DataFrame(cr), hide_index=True, width="stretch")
             st.caption("For strict KP work, choose the KP (Krishnamurti) ayanamsa in Settings.")
+        with st.expander("Shadbala (six-fold strength, virupas)"):
+            _sb = shadbala.cached(ch)["planets"]
+            _rows = []
+            for _lab, _f in [("Sthana (position)", lambda v: v["sthana"]["total"]), ("Dig (direction)", lambda v: v["dig"]),
+                             ("Kala (time)", lambda v: v["kala"]["total"]), ("Chesta (motion)", lambda v: v["chesta"]),
+                             ("Naisargika (natural)", lambda v: v["naisargika"]), ("Drik (aspects)", lambda v: v["drik"]),
+                             ("Total (virupas)", lambda v: v["total"]), ("Rupas", lambda v: v["rupas"]),
+                             ("Required rupas", lambda v: v["required"]), ("Ratio", lambda v: v["ratio"]),
+                             ("Rank", lambda v: v["rank"])]:
+                _rows.append({"": _lab, **{p_: round(_f(v), 2) for p_, v in _sb.items()}})
+            st.dataframe(pd.DataFrame(_rows), hide_index=True, width="stretch")
+            st.caption("Parashara's Shadbala. Checked against AstroSage: totals agree within about 3%.")
         with st.expander("Ashtakavarga (points by sign)"):
             _av = ac.ashtakavarga(ch)
             _rows = [{"Planet": p_, **{ac.SIGN_SHORT[i]: _av["bav"][p_][i] for i in range(12)}} for p_ in _av["bav"]]
@@ -644,7 +672,7 @@ with tabs[3]:
                                     "Nakshatra": r["nakshatra"], "R": "R" if r["retro"] else "",
                                     "House from Asc": r["house_from_asc"], "House from Moon": r["house_from_moon"],
                                     "Classical result": r["result"], "SAV points": r["sav"],
-                                    "Own points (BAV)": "" if r["bav"] is None else r["bav"]} for r in gr]),
+                                    "Own points (BAV)": "-" if r["bav"] is None else str(r["bav"])} for r in gr]),
                      hide_index=True, width="stretch")
         st.caption("Classical result uses the house from the natal Moon (gochara phala) with vedha (obstruction). "
                    "SAV = Sarva Ashtakavarga points of the sign (28+ is good); BAV = the planet's own points (4+ is good).")
@@ -754,23 +782,46 @@ with tabs[5]:
     others = ["(none)"] + [n for n in sorted(profiles) if n != sel]
     sec_name = c4.selectbox("Also good for", others)
     second = get_chart(profiles[sec_name]) if sec_name != "(none)" else None
+    strict = st.toggle("Strict rising-sign rules (recommended)", value=True,
+                       help="Checks the rising sign at the exact time: the right sign type for the purpose, no "
+                            "malefic on the rising sign or in the 8th house, and the Moon not in the 6th, 8th or 12th.")
     if (d1 - d0).days > 400:
         st.warning("Please choose a range of up to about 13 months.")
     elif st.button("Find dates", type="primary"):
         with st.spinner("Searching..."):
             res = ac.find_muhurtas(ch, purpose, d0, d1, mla, mlo, mtz, shukla, ashtami, int(ecl),
-                                   second, hrs)
+                                   second, hrs, strict_lagna=strict)
+            relaxed = False
+            if not res and strict:
+                res = ac.find_muhurtas(ch, purpose, d0, d1, mla, mlo, mtz, shukla, ashtami, int(ecl),
+                                       second, hrs, strict_lagna=False)
+                relaxed = bool(res)
         if not res:
             st.info("No window met every condition. Try a longer range or relax an option.")
         else:
-            st.dataframe(pd.DataFrame([{"Date": r["date"].strftime("%a %d %b %Y"),
-                                        "Window": f"{hm(r['start'], mtz)}–{hm(r['end'], mtz)}",
-                                        "Nakshatra": r["nakshatra"], "Tara": r["tara"], "Tithi": r["tithi"],
-                                        "Moon in house": r["moon_house"]} for r in res]),
-                         hide_index=True, width="stretch")
+            if relaxed:
+                st.warning("No time passed the strict rising-sign rules in this range. These are the next best "
+                           "times; consider a longer range for a stronger muhurta.")
+            st.markdown(f"Rule for this purpose: {ac.LAGNA_RULE_TEXT[ac.MUHURTA_PURPOSES[purpose].get('lagna', 'any')]}.")
+            def _ql(q):
+                return ("🟢 Excellent" if q >= 80 else "🟢 Good" if q >= 60 else "🟡 Fair" if q >= 40
+                        else "🟠 Acceptable")
+            for r in sorted(res, key=lambda r: (-r["quality"], r["start"]))[:12]:
+                why = ", ".join(r["lagna_notes"]) if r["lagna_notes"] else "rising sign is clean"
+                st.markdown(f"{_ql(r['quality'])} **{r['date'].strftime('%a %d %b %Y')}, {hm(r['start'], mtz)}–"
+                            f"{hm(r['end'], mtz)}**  \nRising sign {r['lagna']}; Moon in {r['nakshatra']}. {why[0].upper() + why[1:]}.")
+            st.caption("Best times first. All times avoid Rahu Kalam, Yamagandam and Gulika.")
+            if tech("muhurta"):
+                st.dataframe(pd.DataFrame([{"Date": r["date"].strftime("%a %d %b %Y"),
+                                            "Window": f"{hm(r['start'], mtz)}–{hm(r['end'], mtz)}",
+                                            "Rising sign": r["lagna"], "Quality": r["quality"],
+                                            "Nakshatra": r["nakshatra"], "Tara": r["tara"], "Tithi": r["tithi"],
+                                            "Moon in house": r["moon_house"], "Notes": ", ".join(r["lagna_notes"])}
+                                           for r in res]), hide_index=True, width="stretch")
     st.caption("Rules: purpose-specific stars, favourable Tara Bala, no Rikta tithi or Amavasya, Moon not in the "
                "8th/12th from the Ascendant or 8th from the Moon, outside Rahu Kalam/Yamagandam/Gulika, "
-               "eclipse buffer, and no Mercury retrograde for contracts and property.")
+               "eclipse buffer, no Mercury retrograde for contracts and property, and checks on the rising sign "
+               "at the chosen time (sign type, 8th house, malefics on the rising sign, benefics in good houses).")
 
 # ---- Compatibility ------------------------------------------------------------
 with tabs[6]:
@@ -1192,6 +1243,44 @@ def simple_year(d, tz):
     st.markdown("**Important dates this year**")
     for d_, x_, t_ in yr["events"]:
         st.markdown(f"{ICON.get(t_, '')} **{d_.strftime('%d %b %Y')}**: {x_}")
+    show_varsha(d, tz)
+
+
+@st.cache_data(show_spinner=False)
+def varsha_for(key, _ch, year):
+    return varsha.varshaphal(_ch, year)
+
+
+def show_varsha(d, tz):
+    jd_d = ac.to_jd(datetime(d.year, d.month, d.day, 12), tz)
+    y = d.year if varsha.solar_return(ch, d.year) <= jd_d else d.year - 1
+    v = varsha_for(chart_key(prof), ch, y)
+    pr_ = varsha.plain_reading(v)
+    st.markdown(f"#### Your birthday year (Varshaphal) {ac.jd_to_local(v['start'], tz).strftime('%b %Y')} – "
+                f"{ac.jd_to_local(v['end'], tz).strftime('%b %Y')}")
+    st.caption("A chart drawn for the moment the Sun returns to its birth position each year. It shows the theme "
+               "of the year from one birthday to the next.")
+    cards([("Year rating", f"{pr_['score']}/100", "from the year chart", score_tone(pr_["score"])),
+           ("Year focus", f"House {v['muntha_house']}", "Muntha", "good" if v["muntha_house"] in (1, 2, 3, 5, 9, 10, 11) else "bad"),
+           ("Ruling planet", v["year_lord"], shadbala.strength_word(v["shadbala"][v["year_lord"]]["ratio"])),
+           ("Year rising sign", ac.SIGNS[v["chart"].asc_sign], "mood of the year")])
+    for x in pr_["summary"]:
+        st.markdown(f"- {x}")
+    st.markdown("**The year in phases (Mudda dasha)**")
+    for m in pr_["periods"]:
+        st.markdown(f"{ICON.get(m['tone'], '')} **{ac.jd_to_local(m['start'], tz).strftime('%d %b %Y')} – "
+                    f"{ac.jd_to_local(m['end'], tz).strftime('%d %b %Y')} · {m['lord']} phase**: {m['text']}")
+    if tech(f"varsha_{y}"):
+        a = v["chart"]
+        st.dataframe(pd.DataFrame([{"Planet": p_, "Sign": ac.SIGNS[a.planets[p_]["sign"]],
+                                    "Degree": ac.fmt_deg(a.planets[p_]["lon"]), "House": a.planets[p_]["house"],
+                                    "Dignity": a.planets[p_]["dignity"]} for p_ in ac.PLANETS]
+                                  + [{"Planet": "Ascendant", "Sign": ac.SIGNS[a.asc_sign], "Degree": ac.fmt_deg(a.asc),
+                                      "House": 1, "Dignity": "-"}]), hide_index=True, width="stretch")
+        st.markdown("**Panchadhikari (five office-bearers):** " + "; ".join(f"{k}: {p_}" for k, p_ in v["office"].items())
+                    + f". Year lord chosen: **{v['year_lord']}** (strongest one aspecting the year's rising sign).")
+        st.markdown(f"Muntha in {ac.SIGNS[v['muntha_sign']]}, house {v['muntha_house']} of the year chart "
+                    f"(house {v['muntha_natal_house']} of the birth chart). Years completed: {v['years_completed']}.")
 
 
 with tabs[7]:
@@ -1240,6 +1329,48 @@ def life_for(key, _ch, _md, day_iso):
     return life.life_reading(_ch, _md, ac.to_jd(datetime.fromisoformat(day_iso + "T12:00"), _ch.tz))
 
 
+@st.cache_data(show_spinner="Preparing the PDF report...")
+def pdf_for(key, day_iso):
+    import report_pdf
+    lr_ = life_for(key, ch, md_list, day_iso)
+    rp = report_for(key, ch, md_list, day_iso)
+    njd = ac.to_jd(datetime.fromisoformat(day_iso + "T12:00"), tz0)
+    moon_ = ch.planets["Moon"]
+    cards_ = [("Rising sign (Lagna)", ac.SIGNS[ch.asc_sign], "nature and body", ""),
+              ("Moon sign (Rashi)", ac.SIGNS[moon_["sign"]], "mind and emotions", ""),
+              ("Birth star", ac.NAKSHATRAS[moon_["nak"]], f"quarter {moon_['pada']}", ""),
+              ("Running period", " - ".join(p_.lord for p_ in lr_["chain"][:2]) or "-", "main and sub period", "")]
+    areas_ = [(n_, a_["stars"], a_["verdict"]) for n_, a_ in lr_["areas"].items()]
+    sbr = shadbala.cached(ch)["planets"]
+    strength_ = sorted([(p_, round(v_["ratio"] * 100), shadbala.strength_word(v_["ratio"]).capitalize())
+                        for p_, v_ in sbr.items()], key=lambda r: -r[1])
+    tone_ = {"Good": "good", "Mixed": "mixed", "Challenging": "bad"}
+    per_ = []
+    for e in lr_["events"]:
+        if e["end"] < njd or e["start"] > njd + 365.25 * 10:
+            continue
+        a_, b_ = ac.jd_to_local(e["start"], tz0).strftime("%b %Y"), ac.jd_to_local(e["end"], tz0).strftime("%b %Y")
+        per_.append((a_ if a_ == b_ else f"{a_} - {b_}", life_event_plain(e), e["guidance"], tone_[e["rating"]]))
+    year_ = None
+    try:
+        y_ = datetime.fromisoformat(day_iso).year
+        if varsha.solar_return(ch, y_) > njd:
+            y_ -= 1
+        v_ = varsha.varshaphal(ch, y_)
+        pr_ = varsha.plain_reading(v_)
+        year_ = dict(title=f"Your birthday year {ac.jd_to_local(v_['start'], tz0).strftime('%b %Y')} - "
+                           f"{ac.jd_to_local(v_['end'], tz0).strftime('%b %Y')}",
+                     summary=pr_["summary"],
+                     phases=[(f"{ac.jd_to_local(m['start'], tz0).strftime('%d %b')} - "
+                              f"{ac.jd_to_local(m['end'], tz0).strftime('%d %b %Y')}", f"{m['lord']} phase",
+                              m["text"], m["tone"]) for m in pr_["periods"]])
+    except Exception:
+        pass
+    born = (f"Born {ch.dt_local.strftime('%d %b %Y, %I:%M %p')}, {ch.place or ''}")
+    return report_pdf.build(ch.name, born, cards_, areas_, rp["sections"], T.planet_lines(ch), strength_,
+                            rp["lucky"], per_, year_)
+
+
 RATING_ICON = {"Good": "🟢 Good", "Mixed": "🟡 Mixed", "Challenging": "🔴 Challenging"}
 STAR_TONE = {5: "good", 4: "good", 3: "mixed", 2: "bad", 1: "bad"}
 
@@ -1251,6 +1382,48 @@ def life_for(key, _ch, _md, day_iso):
     return life.life_reading(_ch, _md, ac.to_jd(datetime.fromisoformat(day_iso + "T12:00"), _ch.tz))
 
 
+@st.cache_data(show_spinner="Preparing the PDF report...")
+def pdf_for(key, day_iso):
+    import report_pdf
+    lr_ = life_for(key, ch, md_list, day_iso)
+    rp = report_for(key, ch, md_list, day_iso)
+    njd = ac.to_jd(datetime.fromisoformat(day_iso + "T12:00"), tz0)
+    moon_ = ch.planets["Moon"]
+    cards_ = [("Rising sign (Lagna)", ac.SIGNS[ch.asc_sign], "nature and body", ""),
+              ("Moon sign (Rashi)", ac.SIGNS[moon_["sign"]], "mind and emotions", ""),
+              ("Birth star", ac.NAKSHATRAS[moon_["nak"]], f"quarter {moon_['pada']}", ""),
+              ("Running period", " - ".join(p_.lord for p_ in lr_["chain"][:2]) or "-", "main and sub period", "")]
+    areas_ = [(n_, a_["stars"], a_["verdict"]) for n_, a_ in lr_["areas"].items()]
+    sbr = shadbala.cached(ch)["planets"]
+    strength_ = sorted([(p_, round(v_["ratio"] * 100), shadbala.strength_word(v_["ratio"]).capitalize())
+                        for p_, v_ in sbr.items()], key=lambda r: -r[1])
+    tone_ = {"Good": "good", "Mixed": "mixed", "Challenging": "bad"}
+    per_ = []
+    for e in lr_["events"]:
+        if e["end"] < njd or e["start"] > njd + 365.25 * 10:
+            continue
+        a_, b_ = ac.jd_to_local(e["start"], tz0).strftime("%b %Y"), ac.jd_to_local(e["end"], tz0).strftime("%b %Y")
+        per_.append((a_ if a_ == b_ else f"{a_} - {b_}", life_event_plain(e), e["guidance"], tone_[e["rating"]]))
+    year_ = None
+    try:
+        y_ = datetime.fromisoformat(day_iso).year
+        if varsha.solar_return(ch, y_) > njd:
+            y_ -= 1
+        v_ = varsha.varshaphal(ch, y_)
+        pr_ = varsha.plain_reading(v_)
+        year_ = dict(title=f"Your birthday year {ac.jd_to_local(v_['start'], tz0).strftime('%b %Y')} - "
+                           f"{ac.jd_to_local(v_['end'], tz0).strftime('%b %Y')}",
+                     summary=pr_["summary"],
+                     phases=[(f"{ac.jd_to_local(m['start'], tz0).strftime('%d %b')} - "
+                              f"{ac.jd_to_local(m['end'], tz0).strftime('%d %b %Y')}", f"{m['lord']} phase",
+                              m["text"], m["tone"]) for m in pr_["periods"]])
+    except Exception:
+        pass
+    born = (f"Born {ch.dt_local.strftime('%d %b %Y, %I:%M %p')}, {ch.place or ''}")
+    return report_pdf.build(ch.name, born, cards_, areas_, rp["sections"], T.planet_lines(ch), strength_,
+                            rp["lucky"], per_, year_)
+
+
 RATING_ICON = {"Good": "🟢 Good", "Mixed": "🟡 Mixed", "Challenging": "🔴 Challenging"}
 STAR_TONE = {5: "good", 4: "good", 3: "mixed", 2: "bad", 1: "bad"}
 
@@ -1259,8 +1432,17 @@ with tabs[8]:
     with st.spinner("Building the life reading..."):
         lr = life_for(chart_key(prof), ch, md_list, today_iso)
     st.subheader(f"Life report: {ch.name}")
-    st.download_button("Download this report (HTML, printable)", T.report_html(ch, rep).encode("utf-8"),
-                       file_name=f"{ch.name}_life_report.html", mime="text/html")
+    _c1, _c2 = st.columns(2)
+    with _c1:
+        try:
+            _pdf = pdf_for(chart_key(prof), today_iso)
+            st.download_button("Download life report (PDF)", _pdf, file_name=f"{ch.name}_life_report.pdf",
+                               mime="application/pdf", type="primary", width="stretch")
+        except Exception as _e:  # keep the page working if PDF building fails
+            st.caption(f"PDF report unavailable: {_e}")
+    with _c2:
+        st.download_button("Download as web page (HTML)", T.report_html(ch, rep).encode("utf-8"),
+                           file_name=f"{ch.name}_life_report.html", mime="text/html", width="stretch")
     cards([(name, "★" * a["stars"] + "☆" * (5 - a["stars"]), a["verdict"], STAR_TONE[a["stars"]])
            for name, a in lr["areas"].items()])
     for title, body_ in rep["sections"]:
