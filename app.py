@@ -246,7 +246,8 @@ with st.sidebar:
 
     st.header("Settings")
     ayan = st.selectbox("Ayanamsa", list(ac.AYANAMSAS), index=0)
-    node = st.radio("Rahu / Ketu", ["True", "Mean"], horizontal=True)
+    node = st.radio("Rahu / Ketu", ["Mean", "True"], horizontal=True,
+                    help="Mean node is the default in AstroSage and Jagannatha Hora. KP astrologers often use True.")
     year_len = st.selectbox("Dasha year length (days)", [365.25, 365.2425, 360.0], index=0)
     st.divider()
     if st.button("Sign out", width="stretch"):
@@ -506,6 +507,12 @@ with tabs[0]:
                            "Sub lord": sub, "Sub-sub": ss})
             st.dataframe(pd.DataFrame(cr), hide_index=True, width="stretch")
             st.caption("For strict KP work, choose the KP (Krishnamurti) ayanamsa in Settings.")
+        with st.expander("Ashtakavarga (points by sign)"):
+            _av = ac.ashtakavarga(ch)
+            _rows = [{"Planet": p_, **{ac.SIGN_SHORT[i]: _av["bav"][p_][i] for i in range(12)}} for p_ in _av["bav"]]
+            _rows.append({"Planet": "Total (SAV)", **{ac.SIGN_SHORT[i]: _av["sav"][i] for i in range(12)}})
+            st.dataframe(pd.DataFrame(_rows), hide_index=True, width="stretch")
+            st.caption("Signs with 28 or more total points give easier results when planets pass through them.")
 
 # ---- Dashas -----------------------------------------------------------------
 with tabs[1]:
@@ -636,9 +643,11 @@ with tabs[3]:
         st.dataframe(pd.DataFrame([{"Planet": r["planet"], "Sign": r["sign"], "Degree": r["degree"],
                                     "Nakshatra": r["nakshatra"], "R": "R" if r["retro"] else "",
                                     "House from Asc": r["house_from_asc"], "House from Moon": r["house_from_moon"],
-                                    "Classical result": r["result"]} for r in gr]),
+                                    "Classical result": r["result"], "SAV points": r["sav"],
+                                    "Own points (BAV)": "" if r["bav"] is None else r["bav"]} for r in gr]),
                      hide_index=True, width="stretch")
-        st.caption("Classical result uses the house from the natal Moon (gochara phala), without vedha.")
+        st.caption("Classical result uses the house from the natal Moon (gochara phala) with vedha (obstruction). "
+                   "SAV = Sarva Ashtakavarga points of the sign (28+ is good); BAV = the planet's own points (4+ is good).")
 
         st.subheader("Key dates ahead")
         months = st.slider("Months ahead", 3, 60, 18)
@@ -658,8 +667,8 @@ with tabs[4]:
         la, lo, dtz = location_picker("daily", ch.place, (ch.lat, ch.lon, ch.tz))
     dr = T.day_reading(ch, md_list, dday, la, lo, dtz)
     cards([("This day", dr["verdict"], f"{dr['score']}/100", score_tone(dr["score"])),
-           ("Best time", dr["best"].split(", ")[0] if dr["best"] else "routine work only", "start important work then", "good"),
-           ("Avoid", dr["avoid"].split(" (")[0], dr["avoid"].split(" (")[-1].rstrip(")") if "(" in dr["avoid"] else "", "bad"),
+           ("Best time", dr["best"].split(", ")[0], "start important work then" if "–" in dr["best"] else "", "good"),
+           ("Avoid", dr["avoid"].split(" (")[0], "Rahu Kalam", "bad"),
            ("Lucky colour", dr["colour"].capitalize(), "for clothes or accessories")])
     st.markdown(f"#### {dday.strftime('%A %d %B')}: {dr['theme']}")
     boxes([(a, t_, "") for a, t_ in dr["areas"]])
@@ -783,8 +792,8 @@ with tabs[6]:
                 st.markdown(f"- {x}")
             for cx in (g, b):
                 mk = ac.manglik(cx)
-                st.markdown(f"- **{cx.name}**: " + ("has Mars dosha (Manglik)." if mk["from_asc"] and mk["from_moon"]
-                            else "has mild Mars dosha." if mk["from_asc"] or mk["from_moon"] else "no Mars dosha."))
+                st.markdown(f"- **{cx.name}**: " + ac.manglik_text(cx).replace("Your chart has", "has")
+                            .replace(" in your chart", "").replace("No Mars dosha", "no Mars dosha"))
         sy = ac.synastry(ch, ob, 5.0)
         st.markdown("#### Working together")
         _ta, _tb = sy["tara_a_to_b"], sy["tara_b_to_a"]
@@ -1132,7 +1141,7 @@ def show_year(d, tz):
 def simple_day(d, la, lo, tz):
     dr = T.day_reading(ch, md_list, d, la, lo, tz)
     cards([("This day", dr["verdict"], f"{dr['score']}/100", score_tone(dr["score"])),
-           ("Best time", dr["best"].split(", ")[0] if dr["best"] else "routine work only", "", "good"),
+           ("Best time", dr["best"].split(", ")[0], "", "good"),
            ("Avoid", dr["avoid"].split(" (")[0], "", "bad"),
            ("Lucky colour", dr["colour"].capitalize(), "")])
     st.markdown(f"#### {d.strftime('%A %d %B %Y')}: {dr['theme']}")
@@ -1440,7 +1449,8 @@ classical karmic-debt patterns (Rinas) and the 12th house. Symbolic and traditio
 - No software can give perfect predictions. Interpretations here are rule-based summaries of traditional
   principles. They are a starting point for judgement, not certainties.
 - Birth time accuracy matters: a few minutes can change the Ascendant degree, KP cusps and divisional charts.
-- Shadbala, Ashtakavarga and many rarer yogas are not included yet.
+- Shadbala and many rarer yogas are not included yet. Ashtakavarga (Parashara) is included and checked against
+  AstroSage; transits use vedha (obstruction) and Ashtakavarga points.
 - Not financial, legal, medical or relationship advice.
 
 ### Predictions

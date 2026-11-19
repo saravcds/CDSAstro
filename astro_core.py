@@ -568,12 +568,16 @@ def detect_yogas(ch: Chart) -> list[dict]:
     kendra = {1, 4, 7, 10}
 
     jh = _house_from(moon_s, P["Jupiter"]["sign"])
-    res.append(dict(name="Gaja Kesari", present=jh in kendra,
-                    detail=f"Jupiter is house {jh} from the Moon.",
+    jweak = P["Jupiter"]["dignity"] == "Debilitated" or P["Jupiter"]["combust"]
+    res.append(dict(name="Gaja Kesari", present=jh in kendra and not jweak,
+                    detail=f"Jupiter is house {jh} from the Moon."
+                           + (" Jupiter is debilitated or combust, so the yoga does not hold." if jh in kendra and jweak else ""),
                     meaning="Respect, wisdom and protection; rises after effort."))
 
-    res.append(dict(name="Budha-Aditya", present=P["Sun"]["sign"] == P["Mercury"]["sign"],
-                    detail=f"Sun in {SIGNS[P['Sun']['sign']]}, Mercury in {SIGNS[P['Mercury']['sign']]}.",
+    same = P["Sun"]["sign"] == P["Mercury"]["sign"]
+    res.append(dict(name="Budha-Aditya", present=same and not P["Mercury"]["combust"],
+                    detail=f"Sun in {SIGNS[P['Sun']['sign']]}, Mercury in {SIGNS[P['Mercury']['sign']]}."
+                           + (" Mercury is combust (too close to the Sun), so the yoga is weak." if same and P["Mercury"]["combust"] else ""),
                     meaning="Sharp intellect and good communication (weaker if Mercury is deeply combust)."))
 
     mm = _house_from(moon_s, P["Mars"]["sign"])
@@ -661,15 +665,23 @@ def detect_yogas(ch: Chart) -> list[dict]:
 
 def gochara(ch: Chart, jd: float) -> list[dict]:
     rows = []
+    pos = {p: sidereal_lon(jd, p, ch.ayanamsa, ch.node) for p in PLANETS}
+    hmap = {p: _house_from(ch.moon_sign, sign_of(v[0])) for p, v in pos.items()}
+    av = ashtakavarga(ch)
     for p in PLANETS:
-        lon, speed = sidereal_lon(jd, p, ch.ayanamsa, ch.node)
+        lon, speed = pos[p]
         s = sign_of(lon)
-        hm = _house_from(ch.moon_sign, s)
+        hm = hmap[p]
+        good = hm in GOOD_FROM_MOON[p]
+        blk = vedha_by(p, hm, hmap) if good else []
+        res = ("Favourable" if good and not blk else
+               f"Favourable but blocked (vedha by {', '.join(blk)})" if good else "Challenging")
         rows.append(dict(planet=p, sign=SIGNS[s], degree=fmt_deg(lon),
                          nakshatra=NAKSHATRAS[nak_of(lon)],
                          retro=(speed < 0 and p not in ("Rahu", "Ketu")),
                          house_from_asc=ch.house_of_sign(s), house_from_moon=hm,
-                         result="Favourable" if hm in GOOD_FROM_MOON[p] else "Challenging"))
+                         result=res, vedha=blk, sav=av["sav"][s],
+                         bav=av["bav"][p][s] if p in av["bav"] else None))
     return rows
 
 
@@ -964,6 +976,12 @@ def daily_forecast(ch: Chart, d: date, lat: float, lon: float, tz: str) -> dict:
         add(5, f"Purna tithi ({tithi_name(tithi)})")
     if yoga in BAD_YOGAS:
         add(-5, f"Inauspicious yoga ({yoga})")
+    av = ashtakavarga(ch)
+    mb = av["bav"]["Moon"][msign]
+    if mb >= 5:
+        add(5, f"Ashtakavarga: Moon has {mb} points in {SIGNS[msign]} (strong)")
+    elif mb <= 2:
+        add(-5, f"Ashtakavarga: Moon has only {mb} points in {SIGNS[msign]} (weak)")
     vl = pc["vara_lord"]
     fn = functional_nature(ch, vl)
     if fn.startswith(("Benefic", "Yogakaraka")):
@@ -1150,10 +1168,10 @@ GANA = ["Deva", "Manushya", "Rakshasa", "Manushya", "Deva", "Manushya", "Deva", 
         "Rakshasa", "Rakshasa", "Manushya", "Manushya", "Deva", "Rakshasa", "Deva",
         "Rakshasa", "Deva", "Rakshasa", "Rakshasa", "Manushya", "Manushya", "Deva",
         "Rakshasa", "Rakshasa", "Manushya", "Manushya", "Deva"]
-GANA_SCORE = {("Deva", "Deva"): 6, ("Deva", "Manushya"): 5, ("Deva", "Rakshasa"): 1,
-              ("Manushya", "Deva"): 6, ("Manushya", "Manushya"): 6,
+GANA_SCORE = {("Deva", "Deva"): 6, ("Deva", "Manushya"): 6, ("Deva", "Rakshasa"): 0,
+              ("Manushya", "Deva"): 5, ("Manushya", "Manushya"): 6,
               ("Manushya", "Rakshasa"): 0, ("Rakshasa", "Deva"): 1,
-              ("Rakshasa", "Manushya"): 0, ("Rakshasa", "Rakshasa"): 6}
+              ("Rakshasa", "Manushya"): 0, ("Rakshasa", "Rakshasa"): 6}  # (groom, bride)
 NADI = ["Aadi", "Madhya", "Antya", "Antya", "Madhya", "Aadi", "Aadi", "Madhya", "Antya",
         "Antya", "Madhya", "Aadi", "Aadi", "Madhya", "Antya", "Antya", "Madhya", "Aadi",
         "Aadi", "Madhya", "Antya", "Antya", "Madhya", "Aadi", "Aadi", "Madhya", "Antya"]
@@ -1222,9 +1240,24 @@ def ashtakoota(groom: Chart, bride: Chart) -> list[dict]:
     rows.append(dict(koota="Bhakoot (love, finances, family)", max=7, score=bk,
                      detail=f"Moon signs {dist}/{(bs - gs) % 12 + 1} apart"))
     n1, n2 = NADI[gn], NADI[bn]
-    rows.append(dict(koota="Nadi (health, progeny)", max=8, score=0 if n1 == n2 else 8,
-                     detail=f"{n1} / {n2}"))
+    nd = f"{n1} / {n2}"
+    if n1 == n2 and (gs == bs and gn != bn or gn == bn and gm["pada"] != bm["pada"] or l1 == l2):
+        nd += " (Nadi dosha cancelled: same sign lord, or same star in a different quarter)"
+    rows.append(dict(koota="Nadi (health, progeny)", max=8, score=0 if n1 == n2 else 8, detail=nd))
+    if bk == 0 and (l1 == l2 or relationship(l1, l2) == "friend" and relationship(l2, l1) == "friend"):
+        rows[6]["detail"] += " (Bhakoot dosha cancelled: Moon-sign lords are the same or friends)"
     return rows
+
+
+def manglik_text(ch: "Chart") -> str:
+    mk = manglik(ch)
+    if not (mk["from_asc"] or mk["from_moon"]):
+        return "No Mars dosha (Manglik) in your chart."
+    base = ("Your chart has Mars dosha (Manglik) from both the Ascendant and the Moon." if mk["from_asc"] and mk["from_moon"]
+            else "Mild Mars dosha (Manglik) is present from one reference point only.")
+    if mk["cancellations"]:
+        return base + " It is largely cancelled because " + " and ".join(mk["cancellations"]) + "."
+    return base + " Traditionally it is matched with a partner who also has it, and it softens after about age 28."
 
 
 def manglik(ch: Chart) -> dict:
@@ -1233,8 +1266,19 @@ def manglik(ch: Chart) -> dict:
     h_moon = _house_from(ch.moon_sign, m["sign"])
     h_ven = _house_from(ch.planets["Venus"]["sign"], m["sign"])
     dosha = {1, 2, 4, 7, 8, 12}
+    cancel = []
+    if m["sign"] in (0, 7):
+        cancel.append("Mars is in its own sign")
+    if m["sign"] == 9:
+        cancel.append("Mars is exalted")
+    j = ch.planets["Jupiter"]
+    jh = _house_from(j["sign"], m["sign"])
+    if jh in (1, 5, 7, 9):
+        cancel.append("Jupiter joins or aspects Mars")
+    if m["sign"] == ch.planets["Moon"]["sign"]:
+        cancel.append("Mars is with the Moon")
     return dict(from_asc=h_asc in dosha, from_moon=h_moon in dosha,
-                from_venus=h_ven in dosha, houses=(h_asc, h_moon, h_ven))
+                from_venus=h_ven in dosha, houses=(h_asc, h_moon, h_ven), cancellations=cancel)
 
 
 PLANET_ACTION = {"Sun": "brings authority and visibility to",
@@ -1325,3 +1369,64 @@ def planet_reading(ch: Chart, p: str) -> str:
     m = f" – {'; '.join(mod)}" if mod else ""
     return (f"**{p} in house {d['house']}, {SIGNS[d['sign']]}**{m}. Brings "
             f"{PLANET_KEYWORDS[p]} into {HOUSE_THEMES[d['house']]}.")
+
+# ---------------------------------------------------------------------------
+# Ashtakavarga (Parashara) and gochara vedha
+# ---------------------------------------------------------------------------
+BAV_RULES = {
+    "Sun": {"Sun": [1, 2, 4, 7, 8, 9, 10, 11], "Moon": [3, 6, 10, 11], "Mars": [1, 2, 4, 7, 8, 9, 10, 11],
+            "Mercury": [3, 5, 6, 9, 10, 11, 12], "Jupiter": [5, 6, 9, 11], "Venus": [6, 7, 12],
+            "Saturn": [1, 2, 4, 7, 8, 9, 10, 11], "Asc": [3, 4, 6, 10, 11, 12]},
+    "Moon": {"Sun": [3, 6, 7, 8, 10, 11], "Moon": [1, 3, 6, 7, 10, 11], "Mars": [2, 3, 5, 6, 9, 10, 11],
+             "Mercury": [1, 3, 4, 5, 7, 8, 10, 11], "Jupiter": [1, 4, 7, 8, 10, 11, 12],
+             "Venus": [3, 4, 5, 7, 9, 10, 11], "Saturn": [3, 5, 6, 11], "Asc": [3, 6, 10, 11]},
+    "Mars": {"Sun": [3, 5, 6, 10, 11], "Moon": [3, 6, 11], "Mars": [1, 2, 4, 7, 8, 10, 11],
+             "Mercury": [3, 5, 6, 11], "Jupiter": [6, 10, 11, 12], "Venus": [6, 8, 11, 12],
+             "Saturn": [1, 4, 7, 8, 9, 10, 11], "Asc": [1, 3, 6, 10, 11]},
+    "Mercury": {"Sun": [5, 6, 9, 11, 12], "Moon": [2, 4, 6, 8, 10, 11], "Mars": [1, 2, 4, 7, 8, 9, 10, 11],
+                "Mercury": [1, 3, 5, 6, 9, 10, 11, 12], "Jupiter": [6, 8, 11, 12],
+                "Venus": [1, 2, 3, 4, 5, 8, 9, 11], "Saturn": [1, 2, 4, 7, 8, 9, 10, 11],
+                "Asc": [1, 2, 4, 6, 8, 10, 11]},
+    "Jupiter": {"Sun": [1, 2, 3, 4, 7, 8, 9, 10, 11], "Moon": [2, 5, 7, 9, 11], "Mars": [1, 2, 4, 7, 8, 10, 11],
+                "Mercury": [1, 2, 4, 5, 6, 9, 10, 11], "Jupiter": [1, 2, 3, 4, 7, 8, 10, 11],
+                "Venus": [2, 5, 6, 9, 10, 11], "Saturn": [3, 5, 6, 12], "Asc": [1, 2, 4, 5, 6, 7, 9, 10, 11]},
+    "Venus": {"Sun": [8, 11, 12], "Moon": [1, 2, 3, 4, 5, 8, 9, 11, 12], "Mars": [3, 5, 6, 9, 11, 12],
+              "Mercury": [3, 5, 6, 9, 11], "Jupiter": [5, 8, 9, 10, 11], "Venus": [1, 2, 3, 4, 5, 8, 9, 10, 11],
+              "Saturn": [3, 4, 5, 8, 9, 10, 11], "Asc": [1, 2, 3, 4, 5, 8, 9, 11]},
+    "Saturn": {"Sun": [1, 2, 4, 7, 8, 10, 11], "Moon": [3, 6, 11], "Mars": [3, 5, 6, 10, 11, 12],
+               "Mercury": [6, 8, 9, 10, 11, 12], "Jupiter": [5, 6, 11, 12], "Venus": [6, 11, 12],
+               "Saturn": [3, 5, 6, 11], "Asc": [1, 3, 4, 6, 10, 11]},
+}
+
+
+def ashtakavarga(ch: "Chart") -> dict:
+    """Bhinna (per planet) and Sarva Ashtakavarga, indexed by sign 0..11."""
+    ref = {p: ch.planets[p]["sign"] for p in PLANETS[:7]}
+    ref["Asc"] = ch.asc_sign
+    bav = {}
+    for p, rules in BAV_RULES.items():
+        row = [0] * 12
+        for r, houses in rules.items():
+            for h in houses:
+                row[(ref[r] + h - 1) % 12] += 1
+        bav[p] = row
+    sav = [sum(bav[p][i] for p in bav) for i in range(12)]
+    return dict(bav=bav, sav=sav)
+
+
+# Gochara vedha: favourable house from Moon -> obstructing house
+VEDHA = {"Sun": {3: 9, 6: 12, 10: 4, 11: 5}, "Moon": {1: 5, 3: 9, 6: 12, 7: 2, 10: 4, 11: 8},
+         "Mars": {3: 12, 6: 9, 11: 5}, "Mercury": {2: 5, 4: 3, 6: 9, 8: 1, 10: 8, 11: 12},
+         "Jupiter": {2: 12, 5: 4, 7: 3, 9: 10, 11: 8},
+         "Venus": {1: 8, 2: 7, 3: 1, 4: 10, 5: 9, 8: 5, 9: 11, 11: 6, 12: 3},
+         "Saturn": {3: 12, 6: 9, 11: 5}, "Rahu": {3: 12, 6: 9, 11: 5}, "Ketu": {3: 12, 6: 9, 11: 5}}
+NO_VEDHA = {frozenset(("Sun", "Saturn")), frozenset(("Moon", "Mercury"))}
+
+
+def vedha_by(planet: str, h_moon: int, transit_houses: dict) -> list[str]:
+    """Planets in the obstructing house that cancel a favourable transit."""
+    v = VEDHA.get(planet, {}).get(h_moon)
+    if not v:
+        return []
+    return [q for q, h in transit_houses.items()
+            if h == v and q != planet and frozenset((q, planet)) not in NO_VEDHA]

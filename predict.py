@@ -156,13 +156,21 @@ def transit_strength(ch: ac.Chart, jd: float) -> tuple[float, list[str]]:
     """Background strength from slow planets, judged equally from the natal Moon (gochara)
     and from the Ascendant, plus Saturn cycles."""
     total, notes = 0.0, []
+    av = ac.ashtakavarga(ch)
+    hmap = {p: _house_from(ch.moon_sign, ac.sign_of(ac.sidereal_lon(jd, p, ch.ayanamsa, ch.node)[0]))
+            for p in ac.PLANETS}
     for p, w in SLOW_WEIGHT.items():
         lon = ac.sidereal_lon(jd, p, ch.ayanamsa, ch.node)[0]
         s = ac.sign_of(lon)
         hm = _house_from(ch.moon_sign, s)
         ha = ch.house_of_sign(s)
-        total += 0.5 * (w if hm in ac.GOOD_FROM_MOON[p] else -0.6 * w)
+        good = hm in ac.GOOD_FROM_MOON[p]
+        moon_part = (0 if ac.vedha_by(p, hm, hmap) else w) if good else -0.6 * w
+        total += 0.5 * moon_part
         total += 0.5 * (w if ha in GOOD_FROM_LAGNA[p] else -0.6 * w)
+        if p in av["bav"]:  # Ashtakavarga: points the planet gets in the sign it transits
+            b = av["bav"][p][s]
+            total += 0.4 * w if b >= 5 else -0.4 * w if b <= 2 else 0
     sat = ac.sign_of(ac.sidereal_lon(jd, "Saturn", ch.ayanamsa)[0])
     hs = _house_from(ch.moon_sign, sat)
     if hs in (12, 1, 2):

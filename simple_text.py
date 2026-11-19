@@ -285,6 +285,13 @@ def numerology(ch) -> str:
     return (f"Birth number {b}: {NUM_MEAN[b]}. Destiny number {dest}: {NUM_MEAN[dest]}.")
 
 
+def strongest_areas(ch, n: int = 3) -> list[int]:
+    """Houses with the most Sarva Ashtakavarga points."""
+    sav = ac.ashtakavarga(ch)["sav"]
+    by_house = {h: sav[(ch.asc_sign + h - 1) % 12] for h in range(1, 13)}
+    return sorted(by_house, key=lambda h: -by_house[h])[:n]
+
+
 def planet_lines(ch) -> list[tuple[str, str, str]]:
     """(planet, plain sentence, tone) for each planet."""
     out = []
@@ -328,12 +335,20 @@ def sky_now(ch, jd) -> list[tuple[str, str, str]]:
     for r in ac.gochara(ch, jd):
         if r["planet"] not in SKY_MEAN:
             continue
-        good = r["result"] == "Favourable"
+        good = r["result"].startswith("Favourable")
         txt = (f"{r['planet']} is in {r['sign']}, your area of {HOUSE_PLAIN[r['house_from_asc']]}. "
                + (f"It {SKY_MEAN[r['planet']]} there, and the position is supportive for you." if good else
                   f"It usually {SKY_MEAN[r['planet']]}, but from your Moon sign this position is testing, "
                   "so results come more slowly and need patience.")
                + (" It is moving backward (retrograde) now, so review before you push." if r["retro"] else ""))
+        b = r.get("bav")
+        if r.get("vedha"):
+            txt += f" Its good effect is partly blocked by {', '.join(r['vedha'])} right now."
+        if b is not None:
+            txt += (f" Your chart gives {r['planet']} strong support in this sign ({b} of 8 points)." if b >= 5 else
+                    f" Your chart gives {r['planet']} little support in this sign ({b} of 8 points), so go carefully."
+                    if b <= 2 else "")
+        good = good and not r.get("vedha")
         out.append((r["planet"], txt, "good" if good else "bad"))
     return out
 
@@ -397,7 +412,8 @@ def my_report(ch: ac.Chart, md_list: list, now_jd: float) -> dict:
     yogas = [y for y in ac.detect_yogas(ch) if y["present"]]
 
     def periods(area, kind):
-        rows = A[area]["good_periods" if kind == "good" else "hard_periods"]
+        rows = [p for p in A[area]["good_periods" if kind == "good" else "hard_periods"]
+                if p["start"] < now_jd + 365.25 * 30][:3]
         return [f"{ac.jd_to_local(p['start'], tz).strftime('%b %Y')} to {ac.jd_to_local(p['end'], tz).strftime('%b %Y')}"
                 for p in rows]
 
@@ -412,8 +428,10 @@ def my_report(ch: ac.Chart, md_list: list, now_jd: float) -> dict:
                   f"{HOUSE_PLAIN[P[p]['house']]}. This is a natural source of success for you.")
     for y in yogas:
         key = next((k for k in YOGA_PLAIN if y["name"].startswith(k)), None)
-        if key:
+        if key and f"Your chart has {YOGA_PLAIN[key]}." not in st:
             st.append(f"Your chart has {YOGA_PLAIN[key]}.")
+    top = strongest_areas(ch)
+    st.append("Areas where your efforts give the best results: " + _and([HOUSE_SHORT[h] for h in top]) + ".")
     S.append(("Your strengths", st))
     S.append(("Things to work on", [
         asc["w"],
@@ -441,10 +459,7 @@ def my_report(ch: ac.Chart, md_list: list, now_jd: float) -> dict:
     mk = ac.manglik(ch)
     S.append(("Love and marriage", [
         asc["l"], STARS_SENT[m["stars"]], m["details"][0],
-        ("Your chart has Mars dosha (Manglik). Traditionally this is matched with a partner who also has it, "
-         "and it softens after about age 28." if mk["from_asc"] and mk["from_moon"] else
-         "Mild Mars dosha (Manglik) is present from one reference point only; it is usually considered minor."
-         if mk["from_asc"] or mk["from_moon"] else "No Mars dosha (Manglik) in your chart."),
+        ac.manglik_text(ch),
         ("Good periods for relationships: " + "; ".join(periods("Marriage", "good")) + ".") if periods("Marriage", "good") else "",
         ("Periods that need care in relationships: " + "; ".join(periods("Marriage", "bad")) + ".") if periods("Marriage", "bad") else "",
     ]))
@@ -526,8 +541,28 @@ def day_reading(ch: ac.Chart, md_list: list, d: date, lat: float, lon: float, tz
     if tithi in (11, 26):
         notes.append("Ekadashi: good for fasting, prayer and simple food.")
     vl = ac.WEEKDAY_LORD[d.weekday()]
-    best = ", ".join(f"{hm(a)}–{hm(b)}" for a, b in fc["good_windows"][:3]) or "no special window; keep to routine work"
-    avoid = f"{hm(pc['rahu_kalam'][0])}–{hm(pc['rahu_kalam'][1])} (Rahu Kalam)"
+    wins = fc["good_windows"][:3]
+    fallback = False
+    if not wins:  # no friendly-star window: use safe hours ruled by helpful planets, plus Abhijit
+        bad = [pc["rahu_kalam"], pc["yamagandam"], pc["gulika"]]
+        ok_lords = {"Jupiter", "Venus", "Mercury", "Moon"} | {
+            p for p in ac.PLANETS[:7] if ac.functional_nature(ch, p).startswith(("Benefic", "Yogakaraka"))}
+        cand = [(h["start"], h["end"]) for h in pc["horas"] if h["day"] and h["lord"] in ok_lords]
+        if d.weekday() != 2:
+            cand.append(pc["abhijit"])
+        cand = [(a, b) for a, b in sorted(cand) if not any(not (b <= x0 or a >= x1) for x0, x1 in bad)]
+        merged = []
+        for a, b in cand:
+            if merged and a <= merged[-1][1]:
+                merged[-1] = (merged[-1][0], max(b, merged[-1][1]))
+            else:
+                merged.append((a, b))
+        wins, fallback = merged[:3], True
+    best = ", ".join(f"{hm(a)}–{hm(b)}" for a, b in wins) or "keep to routine work today"
+    if fallback and wins:
+        notes.append("The day's star is not ideal for new starts, so these are the safest hours for important work.")
+    avoid = (f"{hm(pc['rahu_kalam'][0])}–{hm(pc['rahu_kalam'][1])} (Rahu Kalam), "
+             f"{hm(pc['yamagandam'][0])}–{hm(pc['yamagandam'][1])} (Yamagandam)")
     return dict(score=fc["score"], verdict=_verdict(fc["score"]), theme=theme,
                 areas=[("Work", work), ("Money", money), ("Love and family", love), ("Health", health)],
                 notes=notes, colour=COLOUR[vl], best=best, avoid=avoid)
@@ -648,7 +683,10 @@ def matching_reading(a: ac.Chart, b: ac.Chart) -> dict:
     pts.append(q("Bhakoot", "Love, family life and finances are well supported.", "Family and money matters need some care.")
                or "Family and money matters need extra care and agreement.")
     pts.append("Health and children factor (Nadi) is fine." if get["Nadi"]["score"] else
-               "Nadi factor is not matched; traditionally remedies are suggested, so consult an astrologer.")
+               "Nadi factor is not matched, but the dosha is cancelled by a classical exception." if "cancelled" in get["Nadi"]["detail"]
+               else "Nadi factor is not matched; traditionally remedies are suggested, so consult an astrologer.")
+    if not get["Bhakoot"]["score"] and "cancelled" in get["Bhakoot"]["detail"]:
+        pts.append("The Bhakoot mismatch is cancelled because the Moon-sign lords are the same or friends.")
     sy = ac.synastry(a, b, 5.0)
     pts.append(f"As friends or colleagues: {b.name} is a '{ac.TARA_MEANING[sy['tara_a_to_b'][0]]}' influence for "
                f"{a.name}, and {a.name} is a '{ac.TARA_MEANING[sy['tara_b_to_a'][0]]}' influence for {b.name}.")
