@@ -337,6 +337,71 @@ def location_picker(key: str, default_place: str, default: tuple):
     return CITIES[city]
 
 
+import life  # noqa: E402
+import pastlife  # noqa: E402
+import predict as pr  # noqa: E402
+import simple_text as T  # noqa: E402
+
+ICON = {"good": "🟢", "bad": "🔴", "mixed": "🟡", "care": "🟠", "": "⚪"}
+
+
+def tech(key: str) -> bool:
+    return st.toggle("Show technical details", key=f"tech_{key}",
+                     help="Tables, degrees and terms used by astrologers.")
+
+
+def plain_list(items) -> None:
+    """items: (title, text, tone)."""
+    for title, text, tone in items:
+        st.markdown(f"{ICON.get(tone, '⚪')} **{title}:** {text}")
+
+
+def boxes(items) -> None:
+    html = ['<div class="cards">']
+    for title, text, tone in items:
+        html.append(f'<div class="card {tone}"><div class="val" style="font-size:1rem">{title}</div>'
+                    f'<div class="sub" style="font-size:.92rem;opacity:.92;white-space:normal">{text}</div></div>')
+    html.append("</div>")
+    st.markdown("".join(html), unsafe_allow_html=True)
+
+
+def lucky_box(items) -> None:
+    st.markdown("\n".join(f"- **{k}:** {v}" for k, v in items))
+
+
+def score_tone(s: int) -> str:
+    return "good" if s >= 60 else "mixed" if s >= 45 else "bad"
+
+
+@st.cache_data(show_spinner=False)
+def report_for(key, _ch, _md, day_iso):
+    return T.my_report(_ch, _md, ac.to_jd(datetime.fromisoformat(day_iso + "T12:00"), _ch.tz))
+
+
+@st.cache_data(show_spinner=False)
+def plain_events_for(key, _ch, _md, j0, days, pd_):
+    return T.plain_events(_ch, _md, j0, j0 + days, include_pd=pd_)
+
+
+SS_PLAIN = {"phase 1": "Sade Sati begins: pressure builds slowly; control expenses and stay patient.",
+            "phase 2": "Sade Sati peak: the most testing part; protect health, avoid big risks, work steadily.",
+            "phase 3": "Sade Sati ends: pressure eases; results of hard work start coming.",
+            "Ashtama": "Saturn in the 8th from the Moon: sudden obstacles and health care needed; go slowly.",
+            "Kantaka": "Saturn in the 4th from the Moon: pressure at home or work; keep peace in the family."}
+
+
+def ss_plain(phase: str) -> str:
+    return next((v for k, v in SS_PLAIN.items() if k in phase), phase)
+
+
+def life_event_plain(e) -> str:
+    if e["kind"] == "Dasha":
+        return f"{e['ad']} phase of your {e['md']} period" if e.get("md") != e.get("ad") else f"{e['md']} period begins"
+    if e["kind"] == "Eclipse":
+        return f"Eclipse touching your chart ({e['areas'].lower()})"
+    return e["event"]
+
+
 # ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
@@ -356,6 +421,8 @@ st.title(f"{ch.name}")
 st.caption(f"Born {ch.dt_local.strftime('%d %b %Y, %H:%M')} · {ch.place or f'{ch.lat:.2f}, {ch.lon:.2f}'} · "
            f"{ch.tz} · {ayan} ayanamsa {ch.ayan_value:.4f}° · {node} node")
 
+today_iso0 = datetime.now(ZoneInfo(tz0)).date().isoformat()
+
 tabs = st.tabs(["Birth chart", "Dashas", "Yogas & Jaimini", "Transits & key dates", "Daily",
                 "Muhurta finder", "Compatibility", "Predictions", "Life reading", "Past life", "About"])
 
@@ -363,11 +430,29 @@ tabs = st.tabs(["Birth chart", "Dashas", "Yogas & Jaimini", "Transits & key date
 with tabs[0]:
     P = ch.planets
     moon = P["Moon"]
-    cards([("Ascendant", f"{ac.SIGNS[ch.asc_sign]} {ac.fmt_deg(ch.asc)}", ac.NAKSHATRAS[ac.nak_of(ch.asc)]),
-           ("Moon sign", ac.SIGNS[moon["sign"]], ac.fmt_deg(moon["lon"])),
-           ("Birth star", ac.NAKSHATRAS[moon["nak"]], f"pada {moon['pada']}"),
-           ("Current dasha", " – ".join(p.lord for p in chain),
-            f"until {fmt(chain[-1].end, tz0)}" if chain else "")])
+    rep = report_for(chart_key(prof), ch, md_list, today_iso0)
+    secs = dict(rep["sections"])
+    cards([("Rising sign (Lagna)", ac.SIGNS[ch.asc_sign], "your body, nature and how others see you"),
+           ("Moon sign (Rashi)", ac.SIGNS[moon["sign"]], "your mind and emotions"),
+           ("Birth star (Nakshatra)", ac.NAKSHATRAS[moon["nak"]], f"quarter {moon['pada']}"),
+           ("Running period", " – ".join(p.lord for p in chain[:2]) or "-",
+            f"until {fmt(chain[1].end, tz0)}" if len(chain) > 1 else "")])
+    st.markdown("#### About you")
+    st.markdown(" ".join(secs.get("About you", [])))
+    c1, c2 = st.columns(2)
+    with c1:
+        st.markdown("#### Your strengths")
+        for x in secs.get("Your strengths", []):
+            st.markdown(f"- {x}")
+    with c2:
+        st.markdown("#### Things to work on")
+        for x in secs.get("Things to work on", []):
+            st.markdown(f"- {x}")
+    st.markdown("#### Your planets in simple words")
+    plain_list(T.planet_lines(ch))
+    st.markdown("#### Lucky for you")
+    lucky_box(rep["lucky"])
+    st.caption("Gemstones are traditional; please consult an astrologer before wearing one.")
 
     col1, col2 = st.columns(2)
     retro = {p for p in ac.PLANETS if P[p]["retro"]}
@@ -382,144 +467,188 @@ with tabs[0]:
         st.markdown(south_chart(ac.varga_chart(ch, vsel), retro, ac.VARGAS[vsel].replace(" (", "<br>(")),
                     unsafe_allow_html=True)
 
-    st.subheader("Planets")
-    d9 = ac.varga_chart(ch, 9)
-    rows = []
-    for p in ac.PLANETS:
-        d = P[p]
-        rows.append({"Planet": p, "Sign": ac.SIGNS[d["sign"]], "Degree": ac.fmt_deg(d["lon"]),
-                     "Nakshatra": f"{ac.NAKSHATRAS[d['nak']]} {d['pada']}", "House": d["house"],
-                     "Dignity": d["dignity"], "Retro": "R" if d["retro"] else "",
-                     "Combust": "C" if d["combust"] else "",
-                     "Star lord": d["star_lord"], "Sub lord (KP)": d["sub_lord"],
-                     "Sub-sub": d["subsub_lord"], "KP house": d["kp_house"],
-                     "Vargottama": "Yes" if d9[p] == d["sign"] else "",
-                     "Aspects houses": ", ".join(map(str, ac.aspected_houses(p, d["house"]))),
-                     "Function": ac.functional_nature(ch, p)})
-    st.dataframe(pd.DataFrame(rows), hide_index=True, width="stretch")
-
-    with st.expander("Readings (rule-based)", expanded=True):
-        st.markdown(f"**Ascendant {ac.SIGNS[ch.asc_sign]}:** {ac.LAGNA_TRAITS[ch.asc_sign]}")
-        st.markdown(f"**Moon in {ac.SIGNS[moon['sign']]} (emotional nature):** {ac.LAGNA_TRAITS[moon['sign']]}")
+    if tech("chart"):
+        st.subheader("Planets")
+        d9 = ac.varga_chart(ch, 9)
+        rows = []
         for p in ac.PLANETS:
-            st.markdown("- " + ac.planet_reading(ch, p))
+            d = P[p]
+            rows.append({"Planet": p, "Sign": ac.SIGNS[d["sign"]], "Degree": ac.fmt_deg(d["lon"]),
+                         "Nakshatra": f"{ac.NAKSHATRAS[d['nak']]} {d['pada']}", "House": d["house"],
+                         "Dignity": d["dignity"], "Retro": "R" if d["retro"] else "",
+                         "Combust": "C" if d["combust"] else "",
+                         "Star lord": d["star_lord"], "Sub lord (KP)": d["sub_lord"],
+                         "Sub-sub": d["subsub_lord"], "KP house": d["kp_house"],
+                         "Vargottama": "Yes" if d9[p] == d["sign"] else "",
+                         "Aspects houses": ", ".join(map(str, ac.aspected_houses(p, d["house"]))),
+                         "Function": ac.functional_nature(ch, p)})
+        st.dataframe(pd.DataFrame(rows), hide_index=True, width="stretch")
 
-    with st.expander("House lords"):
-        st.dataframe(pd.DataFrame([{"House": h, "Sign": ac.SIGNS[(ch.asc_sign + h - 1) % 12],
-                                    "Lord": ch.lord_of_house(h),
-                                    "Lord placed in house": P[ch.lord_of_house(h)]["house"],
-                                    "Themes": ac.HOUSE_THEMES[h]} for h in range(1, 13)]),
-                     hide_index=True, width="stretch")
+        with st.expander("Readings (rule-based)", expanded=True):
+            st.markdown(f"**Ascendant {ac.SIGNS[ch.asc_sign]}:** {ac.LAGNA_TRAITS[ch.asc_sign]}")
+            st.markdown(f"**Moon in {ac.SIGNS[moon['sign']]} (emotional nature):** {ac.LAGNA_TRAITS[moon['sign']]}")
+            for p in ac.PLANETS:
+                st.markdown("- " + ac.planet_reading(ch, p))
 
-    with st.expander("KP cusps (Placidus)"):
-        cr = []
-        for i, cl in enumerate(ch.cusps):
-            sl, st_l, sub, ss = ac.kp_lords(cl)
-            cr.append({"Cusp": i + 1, "Sign": ac.SIGNS[ac.sign_of(cl)], "Degree": ac.fmt_deg(cl),
-                       "Nakshatra": ac.NAKSHATRAS[ac.nak_of(cl)], "Sign lord": sl, "Star lord": st_l,
-                       "Sub lord": sub, "Sub-sub": ss})
-        st.dataframe(pd.DataFrame(cr), hide_index=True, width="stretch")
-        st.caption("For strict KP work, choose the KP (Krishnamurti) ayanamsa in Settings.")
+        with st.expander("House lords"):
+            st.dataframe(pd.DataFrame([{"House": h, "Sign": ac.SIGNS[(ch.asc_sign + h - 1) % 12],
+                                        "Lord": ch.lord_of_house(h),
+                                        "Lord placed in house": P[ch.lord_of_house(h)]["house"],
+                                        "Themes": ac.HOUSE_THEMES[h]} for h in range(1, 13)]),
+                         hide_index=True, width="stretch")
+
+        with st.expander("KP cusps (Placidus)"):
+            cr = []
+            for i, cl in enumerate(ch.cusps):
+                sl, st_l, sub, ss = ac.kp_lords(cl)
+                cr.append({"Cusp": i + 1, "Sign": ac.SIGNS[ac.sign_of(cl)], "Degree": ac.fmt_deg(cl),
+                           "Nakshatra": ac.NAKSHATRAS[ac.nak_of(cl)], "Sign lord": sl, "Star lord": st_l,
+                           "Sub lord": sub, "Sub-sub": ss})
+            st.dataframe(pd.DataFrame(cr), hide_index=True, width="stretch")
+            st.caption("For strict KP work, choose the KP (Krishnamurti) ayanamsa in Settings.")
 
 # ---- Dashas -----------------------------------------------------------------
 with tabs[1]:
-    st.subheader("Vimshottari dasha")
-    if chain:
-        cards([(lvl, p.lord, f"{fmt(p.start, tz0)} → {fmt(p.end, tz0)}")
-               for lvl, p in zip(["Mahadasha", "Antardasha", "Pratyantar"], chain)])
-        st.markdown(f"**Mahadasha {chain[0].lord}:** {ac.dasha_interpretation(ch, chain[0].lord)}")
-        if len(chain) > 1:
-            st.markdown(f"**Antardasha {chain[1].lord}:** {ac.dasha_interpretation(ch, chain[1].lord)}")
+    st.markdown("A **dasha** is a planetary period. Each period brings that planet's themes to the front of "
+                "your life: a strong, friendly planet gives an easier period, a weak one asks for more care.")
+    st.markdown("#### Your current period")
+    for x in secs.get("Your current period", []):
+        st.markdown(f"- {x}")
+    st.markdown("#### Your life phases (next 15 years)")
+    _dp = [r for r in life.dasha_periods(ch, md_list) if r["end"] > now_jd and r["start"] < now_jd + 365.25 * 15]
+    _oi = {"Good": ("🟢", "good"), "Mixed": ("🟡", "mixed"), "Challenging": ("🔴", "needs care")}
+    for r in _dp:
+        _now = " ← you are here" if r["start"] <= now_jd < r["end"] else ""
+        st.markdown(f"{_oi[r['rating']][0]} **{ac.jd_to_local(r['start'], tz0).strftime('%b %Y')} – "
+                    f"{ac.jd_to_local(r['end'], tz0).strftime('%b %Y')} · {r['ad']} phase of {r['md']} period** "
+                    f"({_oi[r['rating']][1]}){_now}  \n{r['guidance']}")
+    if tech("dasha"):
+        st.subheader("Vimshottari dasha")
+        if chain:
+            cards([(lvl, p.lord, f"{fmt(p.start, tz0)} → {fmt(p.end, tz0)}")
+                   for lvl, p in zip(["Mahadasha", "Antardasha", "Pratyantar"], chain)])
+            st.markdown(f"**Mahadasha {chain[0].lord}:** {ac.dasha_interpretation(ch, chain[0].lord)}")
+            if len(chain) > 1:
+                st.markdown(f"**Antardasha {chain[1].lord}:** {ac.dasha_interpretation(ch, chain[1].lord)}")
 
-    md_rows = [{"": "▶" if chain and m is chain[0] else "", "Mahadasha": m.lord,
-                "Start": fmt(m.start, tz0), "End": fmt(m.end, tz0),
-                "Years": ac.DASHA_YEARS[m.lord]} for m in md_list]
-    st.dataframe(pd.DataFrame(md_rows), hide_index=True, width="stretch")
-    c1, c2 = st.columns(2)
-    md_idx = c1.selectbox("Show antardashas of", range(len(md_list)),
-                          index=md_list.index(chain[0]) if chain else 0,
-                          format_func=lambda i: f"{md_list[i].lord} ({fmt(md_list[i].start, tz0)[-4:]}–{fmt(md_list[i].end, tz0)[-4:]})")
-    md = md_list[md_idx]
-    cur_ad = chain[1] if len(chain) > 1 and chain[0] is md else None
-    ad_idx = c2.selectbox("Show pratyantars of", range(len(md.children)),
-                          index=md.children.index(cur_ad) if cur_ad else 0,
-                          format_func=lambda i: f"{md.lord}–{md.children[i].lord}")
-    c1.dataframe(pd.DataFrame([{"": "▶" if a is cur_ad else "", "Antardasha": f"{md.lord}–{a.lord}",
-                                "Start": fmt(a.start, tz0), "End": fmt(a.end, tz0)} for a in md.children]),
-                 hide_index=True, width="stretch")
-    ad = md.children[ad_idx]
-    cur_pd = chain[2] if len(chain) > 2 and chain[1] is ad else None
-    c2.dataframe(pd.DataFrame([{"": "▶" if q is cur_pd else "", "Pratyantar": f"{md.lord}–{ad.lord}–{q.lord}",
-                                "Start": fmt(q.start, tz0), "End": fmt(q.end, tz0)} for q in ad.children]),
-                 hide_index=True, width="stretch")
-
-    st.subheader("Yogini dasha")
-    yd = yogini_for(chart_key(prof), ch, year_len)
-    ychain = ac.current_chain(yd, now_jd)
-    if ychain:
-        st.markdown(f"Current: **{ychain[0].lord}** ({ac.YOGINI_LORD[ychain[0].lord]}) "
-                    f"{fmt(ychain[0].start, tz0)} → {fmt(ychain[0].end, tz0)}"
-                    + (f" · sub-period **{ychain[1].lord}** ({ac.YOGINI_LORD[ychain[1].lord]}) until "
-                       f"{fmt(ychain[1].end, tz0)}" if len(ychain) > 1 else ""))
-    with st.expander("All Yogini periods"):
-        st.dataframe(pd.DataFrame([{"": "▶" if ychain and y is ychain[0] else "", "Yogini": y.lord,
-                                    "Planet": ac.YOGINI_LORD[y.lord], "Start": fmt(y.start, tz0),
-                                    "End": fmt(y.end, tz0)} for y in yd]),
+        md_rows = [{"": "▶" if chain and m is chain[0] else "", "Mahadasha": m.lord,
+                    "Start": fmt(m.start, tz0), "End": fmt(m.end, tz0),
+                    "Years": ac.DASHA_YEARS[m.lord]} for m in md_list]
+        st.dataframe(pd.DataFrame(md_rows), hide_index=True, width="stretch")
+        c1, c2 = st.columns(2)
+        md_idx = c1.selectbox("Show antardashas of", range(len(md_list)),
+                              index=md_list.index(chain[0]) if chain else 0,
+                              format_func=lambda i: f"{md_list[i].lord} ({fmt(md_list[i].start, tz0)[-4:]}–{fmt(md_list[i].end, tz0)[-4:]})")
+        md = md_list[md_idx]
+        cur_ad = chain[1] if len(chain) > 1 and chain[0] is md else None
+        ad_idx = c2.selectbox("Show pratyantars of", range(len(md.children)),
+                              index=md.children.index(cur_ad) if cur_ad else 0,
+                              format_func=lambda i: f"{md.lord}–{md.children[i].lord}")
+        c1.dataframe(pd.DataFrame([{"": "▶" if a is cur_ad else "", "Antardasha": f"{md.lord}–{a.lord}",
+                                    "Start": fmt(a.start, tz0), "End": fmt(a.end, tz0)} for a in md.children]),
+                     hide_index=True, width="stretch")
+        ad = md.children[ad_idx]
+        cur_pd = chain[2] if len(chain) > 2 and chain[1] is ad else None
+        c2.dataframe(pd.DataFrame([{"": "▶" if q is cur_pd else "", "Pratyantar": f"{md.lord}–{ad.lord}–{q.lord}",
+                                    "Start": fmt(q.start, tz0), "End": fmt(q.end, tz0)} for q in ad.children]),
                      hide_index=True, width="stretch")
 
-# ---- Yogas & Jaimini --------------------------------------------------------
+        st.subheader("Yogini dasha")
+        yd = yogini_for(chart_key(prof), ch, year_len)
+        ychain = ac.current_chain(yd, now_jd)
+        if ychain:
+            st.markdown(f"Current: **{ychain[0].lord}** ({ac.YOGINI_LORD[ychain[0].lord]}) "
+                        f"{fmt(ychain[0].start, tz0)} → {fmt(ychain[0].end, tz0)}"
+                        + (f" · sub-period **{ychain[1].lord}** ({ac.YOGINI_LORD[ychain[1].lord]}) until "
+                           f"{fmt(ychain[1].end, tz0)}" if len(ychain) > 1 else ""))
+        with st.expander("All Yogini periods"):
+            st.dataframe(pd.DataFrame([{"": "▶" if ychain and y is ychain[0] else "", "Yogini": y.lord,
+                                        "Planet": ac.YOGINI_LORD[y.lord], "Start": fmt(y.start, tz0),
+                                        "End": fmt(y.end, tz0)} for y in yd]),
+                         hide_index=True, width="stretch")
+
+# ---- Yogas & doshas ----------------------------------------------------------
 with tabs[2]:
-    yogas = ac.detect_yogas(ch)
-    st.subheader("Yogas found")
-    for y in [y for y in yogas if y["present"]]:
-        st.success(f"**{y['name']}** — {y['meaning']}  \n{y['detail']}")
-    with st.expander("Yogas checked but not present"):
-        for y in [y for y in yogas if not y["present"]]:
-            st.markdown(f"- **{y['name']}**: {y['detail']}")
-    st.caption("Automatic yoga detection covers common classical rules only.")
+    st.markdown("A **yoga** is a special combination of planets that gives a particular gift. "
+                "A **dosha** is a condition that needs care or remedies.")
+    st.markdown("#### Special combinations (yogas) in your chart")
+    _ys = T.yoga_simple(ch)
+    for x in _ys:
+        st.success(x)
+    if not _ys:
+        st.info("No major classical yoga was found. Results come from the overall strength of the planets.")
+    st.markdown("#### Doshas")
+    for x in secs.get("Doshas (special conditions)", []):
+        st.markdown(f"- {x}")
+    _ml = next((x for x in secs.get("Love and marriage", []) if "Mars dosha" in x), None)
+    if _ml:
+        st.markdown(f"- {_ml}")
+    st.markdown("#### Saturn's testing periods ahead")
+    _ss = [s for s in ac.sade_sati(ch, 95) if s["end"] > now_jd][:6]
+    for s_ in _ss:
+        st.markdown(f"{'▶ ' if s_['start'] <= now_jd < s_['end'] else ''}**{fmt(s_['start'], tz0)} – "
+                    f"{fmt(s_['end'], tz0)}**: {ss_plain(s_['phase'])}")
+    if tech("yoga"):
+        yogas = ac.detect_yogas(ch)
+        st.subheader("Yogas found")
+        for y in [y for y in yogas if y["present"]]:
+            st.success(f"**{y['name']}** — {y['meaning']}  \n{y['detail']}")
+        with st.expander("Yogas checked but not present"):
+            for y in [y for y in yogas if not y["present"]]:
+                st.markdown(f"- **{y['name']}**: {y['detail']}")
+        st.caption("Automatic yoga detection covers common classical rules only.")
 
-    c1, c2 = st.columns(2)
-    with c1:
-        st.subheader("Jaimini chara karakas")
-        st.dataframe(pd.DataFrame([{"Karaka": k, "Planet": p, "Degree in sign": f"{d:.2f}°"}
-                                   for k, p, d in ac.chara_karakas(ch)]),
-                     hide_index=True, width="stretch")
-    with c2:
-        st.subheader("Functional nature")
-        st.dataframe(pd.DataFrame([{"Planet": p, "Rules houses": ", ".join(map(str, ch.houses_owned(p))) or "-",
-                                    "Nature": ac.functional_nature(ch, p)} for p in ac.PLANETS]),
-                     hide_index=True, width="stretch")
+        c1, c2 = st.columns(2)
+        with c1:
+            st.subheader("Jaimini chara karakas")
+            st.dataframe(pd.DataFrame([{"Karaka": k, "Planet": p, "Degree in sign": f"{d:.2f}°"}
+                                       for k, p, d in ac.chara_karakas(ch)]),
+                         hide_index=True, width="stretch")
+        with c2:
+            st.subheader("Functional nature")
+            st.dataframe(pd.DataFrame([{"Planet": p, "Rules houses": ", ".join(map(str, ch.houses_owned(p))) or "-",
+                                        "Nature": ac.functional_nature(ch, p)} for p in ac.PLANETS]),
+                         hide_index=True, width="stretch")
 
-    st.subheader("Saturn cycles: Sade Sati, Ashtama and Kantaka Shani")
-    ss = ac.sade_sati(ch, 95)
-    st.dataframe(pd.DataFrame([{"": "▶" if s["start"] <= now_jd < s["end"] else "", "Phase": s["phase"],
-                                "Saturn in": s["sign"], "From": fmt(s["start"], tz0),
-                                "To": fmt(s["end"], tz0)} for s in ss]),
-                 hide_index=True, width="stretch", height=360)
+        st.subheader("Saturn cycles: Sade Sati, Ashtama and Kantaka Shani")
+        ss = ac.sade_sati(ch, 95)
+        st.dataframe(pd.DataFrame([{"": "▶" if s["start"] <= now_jd < s["end"] else "", "Phase": s["phase"],
+                                    "Saturn in": s["sign"], "From": fmt(s["start"], tz0),
+                                    "To": fmt(s["end"], tz0)} for s in ss]),
+                     hide_index=True, width="stretch", height=360)
 
 # ---- Transits -----------------------------------------------------------------
 with tabs[3]:
     c1, c2 = st.columns([1, 2])
     tdate = c1.date_input("Transit date", value=date.today(), format="DD/MM/YYYY", key="tr_date")
     tj = ac.to_jd(datetime(tdate.year, tdate.month, tdate.day, 12), tz0)
-    st.subheader(f"Planets on {tdate.strftime('%d %b %Y')} (gochara)")
-    gr = ac.gochara(ch, tj)
-    st.dataframe(pd.DataFrame([{"Planet": r["planet"], "Sign": r["sign"], "Degree": r["degree"],
-                                "Nakshatra": r["nakshatra"], "R": "R" if r["retro"] else "",
-                                "House from Asc": r["house_from_asc"], "House from Moon": r["house_from_moon"],
-                                "Classical result": r["result"]} for r in gr]),
-                 hide_index=True, width="stretch")
-    st.caption("Classical result uses the house from the natal Moon (gochara phala), without vedha.")
+    st.markdown(f"#### The big planets for you on {tdate.strftime('%d %b %Y')}")
+    st.caption("Slow planets shape the background of your life for months at a time.")
+    plain_list(T.sky_now(ch, tj))
+    st.markdown("#### What's coming up in the next 12 months")
+    _pe = plain_events_for(chart_key(prof), ch, md_list, tj, 366, False)
+    st.caption("🟢 helpful  🟠 needs some care")
+    for d_, x_, t_ in _pe:
+        st.markdown(f"{ICON.get(t_, '')} **{d_.strftime('%d %b %Y')}**: {x_}")
+    if tech("transit"):
+        st.subheader(f"Planets on {tdate.strftime('%d %b %Y')} (gochara)")
+        gr = ac.gochara(ch, tj)
+        st.dataframe(pd.DataFrame([{"Planet": r["planet"], "Sign": r["sign"], "Degree": r["degree"],
+                                    "Nakshatra": r["nakshatra"], "R": "R" if r["retro"] else "",
+                                    "House from Asc": r["house_from_asc"], "House from Moon": r["house_from_moon"],
+                                    "Classical result": r["result"]} for r in gr]),
+                     hide_index=True, width="stretch")
+        st.caption("Classical result uses the house from the natal Moon (gochara phala), without vedha.")
 
-    st.subheader("Key dates ahead")
-    months = st.slider("Months ahead", 3, 60, 18)
-    with st.spinner("Scanning transits, stations, eclipses and dasha changes..."):
-        ev = ac.key_events(ch, tj, months, md_list)
-    cats = sorted({e["category"] for e in ev})
-    pick = st.multiselect("Show", cats, default=[c for c in cats if "sub-sub" not in c])
-    st.dataframe(pd.DataFrame([{"Date": fmt(e["jd"], tz0), "Type": e["category"], "Event": e["event"]}
-                               for e in ev if e["category"] in pick]),
-                 hide_index=True, width="stretch", height=520)
+        st.subheader("Key dates ahead")
+        months = st.slider("Months ahead", 3, 60, 18)
+        with st.spinner("Scanning transits, stations, eclipses and dasha changes..."):
+            ev = ac.key_events(ch, tj, months, md_list)
+        cats = sorted({e["category"] for e in ev})
+        pick = st.multiselect("Show", cats, default=[c for c in cats if "sub-sub" not in c])
+        st.dataframe(pd.DataFrame([{"Date": fmt(e["jd"], tz0), "Type": e["category"], "Event": e["event"]}
+                                   for e in ev if e["category"] in pick]),
+                     hide_index=True, width="stretch", height=520)
 
 # ---- Daily --------------------------------------------------------------------
 with tabs[4]:
@@ -527,67 +656,80 @@ with tabs[4]:
     dday = c1.date_input("Date", value=date.today(), format="DD/MM/YYYY", key="daily_date")
     with c2:
         la, lo, dtz = location_picker("daily", ch.place, (ch.lat, ch.lon, ch.tz))
-    fc = ac.daily_forecast(ch, dday, la, lo, dtz)
-    pc = fc["panchang"]
-    sc = fc["score"]
-    cards([("Day rating", f"{sc}/100", "good day" if sc >= 65 else "mixed day" if sc >= 45 else "careful day",
-            "good" if sc >= 65 else "mixed" if sc >= 45 else "bad"),
-           ("Tara Bala (midday)", fc["tara"], ac.TARA_MEANING[fc["tara"]],
-            {"good": "good", "bad": "bad", "mixed": "mixed"}[fc["tara_quality"]]),
-           ("Moon", ac.SIGNS[fc["moon_sign"]],
-            f"house {fc['house_from_asc']} from Asc · {fc['house_from_moon']} from Moon"),
-           ("Weekday", pc["weekday"], f"lord {pc['vara_lord']}")])
-    st.progress(fc["score"] / 100)
-    for t in fc["text"]:
-        st.markdown(f"- {t}")
-    with st.expander("How the rating is built"):
-        st.dataframe(pd.DataFrame([{"Factor": w, "Points": p} for w, p in fc["parts"]]),
-                     hide_index=True, width="stretch")
-        st.caption("Starts at 50. The rating is an indicator built from traditional rules, not a forecast.")
+    dr = T.day_reading(ch, md_list, dday, la, lo, dtz)
+    cards([("This day", dr["verdict"], f"{dr['score']}/100", score_tone(dr["score"])),
+           ("Best time", dr["best"].split(", ")[0] if dr["best"] else "routine work only", "start important work then", "good"),
+           ("Avoid", dr["avoid"].split(" (")[0], dr["avoid"].split(" (")[-1].rstrip(")") if "(" in dr["avoid"] else "", "bad"),
+           ("Lucky colour", dr["colour"].capitalize(), "for clothes or accessories")])
+    st.markdown(f"#### {dday.strftime('%A %d %B')}: {dr['theme']}")
+    boxes([(a, t_, "") for a, t_ in dr["areas"]])
+    for n_ in dr["notes"]:
+        st.warning(n_)
+    st.markdown(f"**All good times:** {dr['best'] or 'no strong window; keep to routine work'}  \n"
+                f"**Times to avoid:** {dr['avoid']}")
+    if tech("daily"):
+        fc = ac.daily_forecast(ch, dday, la, lo, dtz)
+        pc = fc["panchang"]
+        sc = fc["score"]
+        cards([("Day rating", f"{sc}/100", "good day" if sc >= 65 else "mixed day" if sc >= 45 else "careful day",
+                "good" if sc >= 65 else "mixed" if sc >= 45 else "bad"),
+               ("Tara Bala (midday)", fc["tara"], ac.TARA_MEANING[fc["tara"]],
+                {"good": "good", "bad": "bad", "mixed": "mixed"}[fc["tara_quality"]]),
+               ("Moon", ac.SIGNS[fc["moon_sign"]],
+                f"house {fc['house_from_asc']} from Asc · {fc['house_from_moon']} from Moon"),
+               ("Weekday", pc["weekday"], f"lord {pc['vara_lord']}")])
+        st.progress(fc["score"] / 100)
+        for t in fc["text"]:
+            st.markdown(f"- {t}")
+        with st.expander("How the rating is built"):
+            st.dataframe(pd.DataFrame([{"Factor": w, "Points": p} for w, p in fc["parts"]]),
+                         hide_index=True, width="stretch")
+            st.caption("Starts at 50. The rating is an indicator built from traditional rules, not a forecast.")
 
-    c1, c2 = st.columns(2)
-    with c1:
-        st.subheader("Panchang")
-        rows = [("Sunrise / sunset", f"{hm(pc['sunrise'], dtz)} / {hm(pc['sunset'], dtz)}")]
-        for s, e, v in pc["tithi"]:
-            rows.append(("Tithi", f"{ac.tithi_name(v)}  ({hm_d(s, dtz, dday)}–{hm_d(e, dtz, dday)})"))
-        for s, e, (tn, tq) in fc["tara_segments"]:
-            nk = ac.NAKSHATRAS[next(v for a, b, v in pc["nakshatra"] if a == s)]
-            rows.append(("Nakshatra", f"{nk} – {tn} tara  ({hm_d(s, dtz, dday)}–{hm_d(e, dtz, dday)})"))
-        for s, e, v in pc["moon_sign_segments"]:
-            rows.append(("Moon sign", f"{ac.SIGNS[v]}  ({hm_d(s, dtz, dday)}–{hm_d(e, dtz, dday)})"))
-        rows += [("Yoga (at sunrise)", pc["yoga"] + (" (inauspicious)" if pc["yoga"] in ac.BAD_YOGAS else "")),
-                 ("Karana (at sunrise)", pc["karana"]),
-                 ("Rahu Kalam", f"{hm(pc['rahu_kalam'][0], dtz)}–{hm(pc['rahu_kalam'][1], dtz)}"),
-                 ("Yamagandam", f"{hm(pc['yamagandam'][0], dtz)}–{hm(pc['yamagandam'][1], dtz)}"),
-                 ("Gulika", f"{hm(pc['gulika'][0], dtz)}–{hm(pc['gulika'][1], dtz)}"),
-                 ("Abhijit muhurta", f"{hm(pc['abhijit'][0], dtz)}–{hm(pc['abhijit'][1], dtz)}")]
-        st.dataframe(pd.DataFrame(rows, columns=["Item", "Value"]), hide_index=True, width="stretch",
-                     height=36 * (len(rows) + 1) + 4)
-        st.caption("Times marked (+1) fall after midnight, before the next sunrise.")
-    with c2:
-        st.subheader("Best windows today")
-        if fc["good_windows"]:
-            for s, e in fc["good_windows"]:
-                st.markdown(f"- **{hm(s, dtz)} – {hm(e, dtz)}**")
-        else:
-            st.markdown("No window combines a favourable star with no Rahu/Yama/Gulika period. "
-                        "Keep the day for routine work.")
-        st.caption("Daylight slots outside Rahu Kalam, Yamagandam and Gulika, while the star is favourable for this person.")
+        c1, c2 = st.columns(2)
+        with c1:
+            st.subheader("Panchang")
+            rows = [("Sunrise / sunset", f"{hm(pc['sunrise'], dtz)} / {hm(pc['sunset'], dtz)}")]
+            for s, e, v in pc["tithi"]:
+                rows.append(("Tithi", f"{ac.tithi_name(v)}  ({hm_d(s, dtz, dday)}–{hm_d(e, dtz, dday)})"))
+            for s, e, (tn, tq) in fc["tara_segments"]:
+                nk = ac.NAKSHATRAS[next(v for a, b, v in pc["nakshatra"] if a == s)]
+                rows.append(("Nakshatra", f"{nk} – {tn} tara  ({hm_d(s, dtz, dday)}–{hm_d(e, dtz, dday)})"))
+            for s, e, v in pc["moon_sign_segments"]:
+                rows.append(("Moon sign", f"{ac.SIGNS[v]}  ({hm_d(s, dtz, dday)}–{hm_d(e, dtz, dday)})"))
+            rows += [("Yoga (at sunrise)", pc["yoga"] + (" (inauspicious)" if pc["yoga"] in ac.BAD_YOGAS else "")),
+                     ("Karana (at sunrise)", pc["karana"]),
+                     ("Rahu Kalam", f"{hm(pc['rahu_kalam'][0], dtz)}–{hm(pc['rahu_kalam'][1], dtz)}"),
+                     ("Yamagandam", f"{hm(pc['yamagandam'][0], dtz)}–{hm(pc['yamagandam'][1], dtz)}"),
+                     ("Gulika", f"{hm(pc['gulika'][0], dtz)}–{hm(pc['gulika'][1], dtz)}"),
+                     ("Abhijit muhurta", f"{hm(pc['abhijit'][0], dtz)}–{hm(pc['abhijit'][1], dtz)}")]
+            st.dataframe(pd.DataFrame(rows, columns=["Item", "Value"]), hide_index=True, width="stretch",
+                         height=36 * (len(rows) + 1) + 4)
+            st.caption("Times marked (+1) fall after midnight, before the next sunrise.")
+        with c2:
+            st.subheader("Best windows today")
+            if fc["good_windows"]:
+                for s, e in fc["good_windows"]:
+                    st.markdown(f"- **{hm(s, dtz)} – {hm(e, dtz)}**")
+            else:
+                st.markdown("No window combines a favourable star with no Rahu/Yama/Gulika period. "
+                            "Keep the day for routine work.")
+            st.caption("Daylight slots outside Rahu Kalam, Yamagandam and Gulika, while the star is favourable for this person.")
 
-    st.subheader("Hour by hour (hora)")
-    now_local = datetime.now(ZoneInfo(dtz))
-    now_j = ac.to_jd(now_local.replace(tzinfo=None), dtz)
-    st.dataframe(pd.DataFrame([{"": "▶" if h["start"] <= now_j < h["end"] else "",
-                                "Time": f"{hm(h['start'], dtz)}–{hm(h['end'], dtz)}",
-                                "Day/Night": "Day" if h["day"] else "Night", "Hora lord": h["lord"],
-                                "Good for": h["good_for"], "For this chart": h["for_you"]}
-                               for h in fc["horas"]]),
-                 hide_index=True, width="stretch", height=600)
+        st.subheader("Hour by hour (hora)")
+        now_local = datetime.now(ZoneInfo(dtz))
+        now_j = ac.to_jd(now_local.replace(tzinfo=None), dtz)
+        st.dataframe(pd.DataFrame([{"": "▶" if h["start"] <= now_j < h["end"] else "",
+                                    "Time": f"{hm(h['start'], dtz)}–{hm(h['end'], dtz)}",
+                                    "Day/Night": "Day" if h["day"] else "Night", "Hora lord": h["lord"],
+                                    "Good for": h["good_for"], "For this chart": h["for_you"]}
+                                   for h in fc["horas"]]),
+                     hide_index=True, width="stretch", height=600)
 
-# ---- Muhurta ---------------------------------------------------------------------
+# ---- Muhurta ------------------------------------------------------------------
 with tabs[5]:
     st.subheader("Find good dates and times")
+    st.markdown("Choose what you want to do and a date range. The app finds days and times when the stars are friendly for you, and skips the bad periods of each day.")
     c1, c2 = st.columns(2)
     purpose = c1.selectbox("Purpose", list(ac.MUHURTA_PURPOSES))
     with c2:
@@ -621,7 +763,7 @@ with tabs[5]:
                "8th/12th from the Ascendant or 8th from the Moon, outside Rahu Kalam/Yamagandam/Gulika, "
                "eclipse buffer, and no Mercury retrograde for contracts and property.")
 
-# ---- Compatibility ---------------------------------------------------------------
+# ---- Compatibility ------------------------------------------------------------
 with tabs[6]:
     others = [n for n in sorted(profiles) if n != sel]
     if not others:
@@ -634,48 +776,217 @@ with tabs[6]:
         if mode.startswith("Marriage"):
             groom_is_a = st.radio("Groom", [sel, other], horizontal=True) == sel
             g, b = (ch, ob) if groom_is_a else (ob, ch)
-            rows = ac.ashtakoota(g, b)
-            total = sum(r["score"] for r in rows)
-            verdict = ("Excellent" if total >= 28 else "Good" if total >= 24 else
-                       "Acceptable" if total >= 18 else "Below the usual threshold of 18")
-            cards([("Ashtakoota score", f"{total:g} / 36", verdict,
-                    "good" if total >= 24 else "mixed" if total >= 18 else "bad")])
-            st.dataframe(pd.DataFrame([{"Koota": r["koota"], "Score": f"{r['score']:g} / {r['max']}",
-                                        f"{g.name} / {b.name}": r["detail"]} for r in rows]),
-                         hide_index=True, width="stretch")
-            mg = st.columns(2)
-            for col, cx in zip(mg, (g, b)):
+            mr = T.matching_reading(g, b)
+            cards([("Match score", f"{mr['total']:g} / 36", mr["verdict"],
+                    "good" if mr["total"] >= 24 else "mixed" if mr["total"] >= 18 else "bad")])
+            for x in mr["points"][1:]:
+                st.markdown(f"- {x}")
+            for cx in (g, b):
                 mk = ac.manglik(cx)
-                col.markdown(f"**{cx.name} – Mars dosha:** from Ascendant "
-                             f"{'yes' if mk['from_asc'] else 'no'}, from Moon {'yes' if mk['from_moon'] else 'no'}, "
-                             f"from Venus {'yes' if mk['from_venus'] else 'no'} (houses {mk['houses']})")
-            st.caption("Ashtakoota uses the common North/South Indian tables; some schools differ slightly in "
-                       "Vashya and Gana scoring and in dosha cancellations.")
-        orb = st.slider("Orb for planet contacts (°)", 1.0, 8.0, 5.0, 0.5)
-        sy = ac.synastry(ch, ob, orb)
-        st.subheader("Working relationship")
-        def tone_rel(txt):
-            return "bad" if txt.startswith(("6/8", "2/12")) else "good"
-        ta, tb = sy["tara_a_to_b"], sy["tara_b_to_a"]
-        cards([(f"{other} is, for {sel}", ta[0], ac.TARA_MEANING[ta[0]], ta[1]),
-               (f"{sel} is, for {other}", tb[0], ac.TARA_MEANING[tb[0]], tb[1]),
-               ("Ascendants", sy["asc_relation"].split(" - ")[0], sy["asc_relation"].split(" - ")[-1],
-                tone_rel(sy["asc_relation"])),
-               ("Moon signs", sy["moon_relation"].split(" - ")[0], sy["moon_relation"].split(" - ")[-1],
-                tone_rel(sy["moon_relation"]))])
-        la_, lb_, r1, r2 = sy["lagna_lords"]
-        if la_ == lb_:
-            st.markdown(f"Ascendant lords: both charts are ruled by **{la_}**.")
-        else:
-            st.markdown(f"Ascendant lords: {sel}'s **{la_}** treats {other}'s **{lb_}** as *{r1}*; "
-                        f"{lb_} treats {la_} as *{r2}*.")
-        st.markdown("**House overlays:** " + " · ".join(f"{k} {v}" for k, v in sy["overlays"].items()))
-        st.dataframe(pd.DataFrame(sy["contacts"]).rename(columns={"contact": "Contact", "orb": "Orb (°)",
-                                                                  "reading": "Reading"}),
-                     hide_index=True, width="stretch")
+                st.markdown(f"- **{cx.name}**: " + ("has Mars dosha (Manglik)." if mk["from_asc"] and mk["from_moon"]
+                            else "has mild Mars dosha." if mk["from_asc"] or mk["from_moon"] else "no Mars dosha."))
+        sy = ac.synastry(ch, ob, 5.0)
+        st.markdown("#### Working together")
+        _ta, _tb = sy["tara_a_to_b"], sy["tara_b_to_a"]
+        def _rel(txt, what):
+            if txt.startswith("6/8"):
+                return f"Your {what} work differently; misunderstandings can happen, so agree things clearly and in writing.", "bad"
+            if txt.startswith("2/12"):
+                return f"Your {what} pull in slightly different directions; keep money and roles clearly defined.", "mixed"
+            return f"Your {what} fit well together.", "good"
+        _m, _mt = _rel(sy["moon_relation"], "emotions and moods")
+        _a, _at = _rel(sy["asc_relation"], "personal styles")
+        boxes([(f"{other} for {sel}", f"A '{ac.TARA_MEANING[_ta[0]]}' influence.", _ta[1]),
+               (f"{sel} for {other}", f"A '{ac.TARA_MEANING[_tb[0]]}' influence.", _tb[1]),
+               ("Mind and mood", _m, _mt), ("Personal style", _a, _at)])
+        if tech("compat"):
+            if mode.startswith("Marriage"):
+                pass
+                g, b = (ch, ob) if groom_is_a else (ob, ch)
+                rows = ac.ashtakoota(g, b)
+                total = sum(r["score"] for r in rows)
+                verdict = ("Excellent" if total >= 28 else "Good" if total >= 24 else
+                           "Acceptable" if total >= 18 else "Below the usual threshold of 18")
+                cards([("Ashtakoota score", f"{total:g} / 36", verdict,
+                        "good" if total >= 24 else "mixed" if total >= 18 else "bad")])
+                st.dataframe(pd.DataFrame([{"Koota": r["koota"], "Score": f"{r['score']:g} / {r['max']}",
+                                            f"{g.name} / {b.name}": r["detail"]} for r in rows]),
+                             hide_index=True, width="stretch")
+                mg = st.columns(2)
+                for col, cx in zip(mg, (g, b)):
+                    mk = ac.manglik(cx)
+                    col.markdown(f"**{cx.name} – Mars dosha:** from Ascendant "
+                                 f"{'yes' if mk['from_asc'] else 'no'}, from Moon {'yes' if mk['from_moon'] else 'no'}, "
+                                 f"from Venus {'yes' if mk['from_venus'] else 'no'} (houses {mk['houses']})")
+                st.caption("Ashtakoota uses the common North/South Indian tables; some schools differ slightly in "
+                           "Vashya and Gana scoring and in dosha cancellations.")
+            orb = st.slider("Orb for planet contacts (°)", 1.0, 8.0, 5.0, 0.5)
+            sy = ac.synastry(ch, ob, orb)
+            st.subheader("Working relationship")
+            def tone_rel(txt):
+                return "bad" if txt.startswith(("6/8", "2/12")) else "good"
+            ta, tb = sy["tara_a_to_b"], sy["tara_b_to_a"]
+            cards([(f"{other} is, for {sel}", ta[0], ac.TARA_MEANING[ta[0]], ta[1]),
+                   (f"{sel} is, for {other}", tb[0], ac.TARA_MEANING[tb[0]], tb[1]),
+                   ("Ascendants", sy["asc_relation"].split(" - ")[0], sy["asc_relation"].split(" - ")[-1],
+                    tone_rel(sy["asc_relation"])),
+                   ("Moon signs", sy["moon_relation"].split(" - ")[0], sy["moon_relation"].split(" - ")[-1],
+                    tone_rel(sy["moon_relation"]))])
+            la_, lb_, r1, r2 = sy["lagna_lords"]
+            if la_ == lb_:
+                st.markdown(f"Ascendant lords: both charts are ruled by **{la_}**.")
+            else:
+                st.markdown(f"Ascendant lords: {sel}'s **{la_}** treats {other}'s **{lb_}** as *{r1}*; "
+                            f"{lb_} treats {la_} as *{r2}*.")
+            st.markdown("**House overlays:** " + " · ".join(f"{k} {v}" for k, v in sy["overlays"].items()))
+            st.dataframe(pd.DataFrame(sy["contacts"]).rename(columns={"contact": "Contact", "orb": "Orb (°)",
+                                                                      "reading": "Reading"}),
+                         hide_index=True, width="stretch")
 
-# ---- Predictions --------------------------------------------------------------------
-import predict as pr  # noqa: E402
+    # ---- Predictions --------------------------------------------------------------------
+    import predict as pr  # noqa: E402
+
+
+    def _tone(score):
+        return "good" if score >= 60 else "mixed" if score >= 45 else "bad"
+
+
+    def _verdict(score):
+        return "favourable" if score >= 60 else "mixed" if score >= 45 else "needs care"
+
+
+    def _fmt_day(d):
+        return d.strftime("%a %d %b")
+
+
+    def area_boxes(items):
+        html = ['<div class="cards">']
+        for title, text, tone in items:
+            html.append(f'<div class="card {tone}"><div class="val" style="font-size:1rem">{title}</div>'
+                        f'<div class="sub" style="font-size:.9rem;opacity:.9">{text}</div></div>')
+        html.append("</div>")
+        st.markdown("".join(html), unsafe_allow_html=True)
+
+
+    def bar(df, x, y, height=230):
+        import altair as alt
+        df = df.copy()
+        df["Band"] = ["Favourable" if v >= 60 else "Mixed" if v >= 45 else "Needs care" for v in df[y]]
+        c = (alt.Chart(df).mark_bar(cornerRadiusTopLeft=3, cornerRadiusTopRight=3)
+             .encode(x=alt.X(f"{x}:N", sort=None, title=None, axis=alt.Axis(labelAngle=-45)),
+                     y=alt.Y(f"{y}:Q", scale=alt.Scale(domain=[0, 100]), title=y),
+                     color=alt.Color("Band:N", scale=alt.Scale(domain=["Favourable", "Mixed", "Needs care"],
+                                                               range=["#16a34a", "#d97706", "#dc2626"]),
+                                     legend=alt.Legend(orient="top", title=None)),
+                     tooltip=[x, y, "Band"]).properties(height=height))
+        rule = alt.Chart(pd.DataFrame({"n": [50]})).mark_rule(strokeDash=[4, 4], opacity=.5).encode(y="n:Q")
+        st.altair_chart(c + rule, width="stretch")
+
+
+    AREA_TONE = {"Supportive": "good", "Mixed / steady": "mixed", "Challenging": "bad"}
+
+
+    def show_day(d, la, lo, tz):
+        r = pr.predict_day(ch, md_list, d, la, lo, tz)
+        fc = r["forecast"]
+        cards([("Day rating", f"{fc['score']}/100", _verdict(fc["score"]), _tone(fc["score"])),
+               ("Star of the day", fc["tara"], ac.TARA_MEANING[fc["tara"]], fc["tara_quality"]),
+               ("Moon", f"House {fc['house_from_asc']}", ac.HOUSE_THEMES[fc["house_from_asc"]]),
+               ("Running dasha", " – ".join(p.lord for p in r["chain"]), "Mahadasha – Antar – Pratyantar")])
+        st.markdown(f"#### {_fmt_day(d)}: {r['headline']}")
+        area_boxes([(k, v, "") for k, v in r["areas"].items()])
+        c1, c2 = st.columns(2)
+        with c1:
+            st.markdown("**Do**")
+            for x in r["do"] or ["Keep to routine work."]:
+                st.markdown(f"- {x}")
+        with c2:
+            st.markdown("**Avoid**")
+            for x in r["avoid"]:
+                st.markdown(f"- {x}")
+        c1, c2 = st.columns(2)
+        with c1:
+            st.markdown("**Best windows**")
+            for s, e in fc["good_windows"] or []:
+                st.markdown(f"- {hm(s, tz)} – {hm(e, tz)}")
+            if not fc["good_windows"]:
+                st.markdown("- No strong window today; keep to routine work.")
+        with c2:
+            st.markdown("**Helpful hours (hora)**")
+            for h in r["good_horas"]:
+                st.markdown(f"- {hm(h['start'], tz)}–{hm(h['end'], tz)} {h['lord']}: {h['good_for']}")
+        st.caption("Full panchang and all 24 horas are in the Daily tab.")
+
+
+    def show_range(d, ndays, tz):
+        r = pr.predict_range(ch, md_list, d, ndays, tz)
+        rt = r["rating"]
+        best = ", ".join(_fmt_day(x["date"]) for x in r["best"][:3])
+        worst = ", ".join(_fmt_day(x["date"]) for x in r["worst"][:3])
+        cards([("Overall rating", f"{rt['rating']}/100", _verdict(rt["rating"]), _tone(rt["rating"])),
+               ("Best days", best, "strongest daily scores", "good"),
+               ("Days to be careful", worst, "lowest daily scores", "bad"),
+               ("Running dasha", " – ".join(p.lord for p in rt["chain"]),
+                "; ".join(rt["notes"]) or "no Saturn pressure on the Moon")])
+        df = pd.DataFrame({"Day": [x["date"].strftime("%d %b") for x in r["days"]],
+                           "Score": [x["score"] for x in r["days"]]})
+        bar(df, "Day", "Score")
+        table = pd.DataFrame([{"Date": _fmt_day(x["date"]), "Score": x["score"],
+                               "Star": f"{x['nakshatra']} ({x['tara']})",
+                               "Moon": f"house {x['house_from_asc']}: {x['theme']}",
+                               "Notes": ", ".join(x["flags"]), "Good for": ", ".join(x["good_for"])}
+                              for x in r["days"]])
+        if ndays <= 7:
+            st.dataframe(table, hide_index=True, width="stretch")
+        else:
+            with st.expander("Day-by-day table", expanded=False):
+                st.dataframe(table, hide_index=True, width="stretch", height=560)
+        st.markdown("**Outlook by area**")
+        area_boxes([(a["area"] + f" – {a['verdict']}", a["why"], AREA_TONE[a["verdict"]]) for a in r["areas"]])
+        st.markdown("**Planets in this period**")
+        for t in r["transits"]:
+            st.markdown(f"- {t['text']} ({_fmt_day(ac.jd_to_local(t['start'], tz).date())} → "
+                        f"{_fmt_day(ac.jd_to_local(t['end'], tz).date())}; classical result from Moon: {t['classical']})")
+        if r["events"]:
+            st.markdown("**Key dates**")
+            st.dataframe(pd.DataFrame([{"Date": fmt(e["jd"], tz), "Event": e["event"]} for e in r["events"]]),
+                         hide_index=True, width="stretch")
+        st.caption("Overall rating: 60% average daily score, plus slow-planet transits (judged from both the Moon and "
+                   "the Ascendant), Saturn cycles and the running dasha. 50 is neutral.")
+
+
+    def show_year(d, tz):
+        r = pr.predict_year(ch, md_list, d, tz)
+        notes = sorted({n for m in r["months"] for n in m["notes"]})
+        cards([("Year rating", f"{r['rating']}/100", _verdict(r["rating"]), _tone(r["rating"])),
+               ("Best months", ", ".join(m["month"].strftime("%b %Y") for m in r["best"]), "highest ratings", "good"),
+               ("Months needing care", ", ".join(m["month"].strftime("%b %Y") for m in r["worst"]),
+                "lowest ratings", "bad"),
+               ("Saturn cycle", "; ".join(notes) or "None active", "Sade Sati / Ashtama / Kantaka")])
+        df = pd.DataFrame({"Month": [m["month"].strftime("%b %y") for m in r["months"]],
+                           "Rating": [m["rating"] for m in r["months"]]})
+        bar(df, "Month", "Rating", 240)
+        st.dataframe(pd.DataFrame([{"Month": m["month"].strftime("%b %Y"), "Rating": m["rating"],
+                                    "Good days": m["good_days"], "Hard days": m["hard_days"],
+                                    "Dasha": m["dasha"], "Top dates": ", ".join(x.strftime("%d %b") for x in m["best_days"]),
+                                    "Notes": "; ".join(m["notes"])} for m in r["months"]]),
+                     hide_index=True, width="stretch")
+        st.markdown("**Outlook by area**")
+        area_boxes([(a["area"] + f" – {a['verdict']}", a["why"], AREA_TONE[a["verdict"]]) for a in r["areas"]])
+        st.markdown("**Dasha periods this year**")
+        for x in r["dashas"]:
+            st.markdown(f"- **{x['period']}** ({fmt(x['start'], tz)} → {fmt(x['end'], tz)}): {x['meaning']}")
+        st.markdown("**Major transits**")
+        for t in r["transits"]:
+            st.markdown(f"- {t['text']} ({fmt(t['start'], tz)} → {fmt(t['end'], tz)}; classical result from Moon: "
+                        f"{t['classical']})")
+        st.markdown("**Key dates**")
+        st.dataframe(pd.DataFrame([{"Date": fmt(e["jd"], tz), "Type": e["category"], "Event": e["event"]}
+                                   for e in r["events"]]), hide_index=True, width="stretch", height=420)
+        st.caption("Monthly rating: 60% average daily score, plus slow-planet transits (from both the Moon and the "
+                   "Ascendant), Saturn cycles and the running dasha. 50 is neutral.")
+
+# ---- Predictions --------------------------------------------------------------
 
 
 def _tone(score):
@@ -818,6 +1129,62 @@ def show_year(d, tz):
                "Ascendant), Saturn cycles and the running dasha. 50 is neutral.")
 
 
+def simple_day(d, la, lo, tz):
+    dr = T.day_reading(ch, md_list, d, la, lo, tz)
+    cards([("This day", dr["verdict"], f"{dr['score']}/100", score_tone(dr["score"])),
+           ("Best time", dr["best"].split(", ")[0] if dr["best"] else "routine work only", "", "good"),
+           ("Avoid", dr["avoid"].split(" (")[0], "", "bad"),
+           ("Lucky colour", dr["colour"].capitalize(), "")])
+    st.markdown(f"#### {d.strftime('%A %d %B %Y')}: {dr['theme']}")
+    boxes([(a, t_, "") for a, t_ in dr["areas"]])
+    for n_ in dr["notes"]:
+        st.warning(n_)
+    st.markdown(f"**Good times:** {dr['best'] or 'keep to routine work'}  \n**Avoid:** {dr['avoid']}")
+
+
+def simple_range(d, ndays, tz):
+    rr = T.range_reading(ch, md_list, d, ndays, tz)
+    st.markdown(f"#### {rr['intro']}")
+    bar(pd.DataFrame({"Day": [x["date"] for x in rr["daily"]], "Score": [x["score"] for x in rr["daily"]]}),
+        "Day", "Score")
+    c1, c2 = st.columns(2)
+    with c1:
+        st.markdown("**Best days**")
+        for x in rr["best"]:
+            st.markdown(f"- 🟢 {x}")
+    with c2:
+        st.markdown("**Days to take it easy**")
+        for x in rr["careful"]:
+            st.markdown(f"- 🔴 {x}")
+    st.markdown("**By area of life**")
+    boxes([(a, t_, "") for a, t_ in rr["areas"]])
+    if rr["events"]:
+        st.markdown("**Important dates**")
+        for d_, x_, t_ in rr["events"]:
+            st.markdown(f"- {ICON.get(t_, '')} **{d_.strftime('%a %d %b')}**: {x_}")
+    if ndays <= 7:
+        st.markdown("**Day by day**")
+        for x in rr["daily"]:
+            st.markdown(f"- {ICON[score_tone(x['score'])]} **{x['date']}**: {x['theme']}"
+                        + (f" ({x['note']})" if x["note"] else ""))
+
+
+def simple_year(d, tz):
+    yr = T.year_reading(ch, md_list, d, tz)
+    st.markdown(f"#### {yr['intro']}")
+    bar(pd.DataFrame({"Month": [m["month"][:3] + " " + m["month"][-2:] for m in yr["months"]],
+                      "Rating": [m["rating"] for m in yr["months"]]}), "Month", "Rating", 240)
+    tone_icon = {"Favourable": "🟢 Favourable", "Steady": "🟡 Steady", "Needs care": "🔴 Needs care"}
+    for m in yr["months"]:
+        st.markdown(f"{tone_icon[m['tone']].split(' ')[0]} **{m['month']}** ({m['tone'].lower()}): "
+                    f"{m['text'][0].upper() + m['text'][1:]}")
+    st.markdown("**By area of life**")
+    boxes([(a, t_, "") for a, t_ in yr["areas"]])
+    st.markdown("**Important dates this year**")
+    for d_, x_, t_ in yr["events"]:
+        st.markdown(f"{ICON.get(t_, '')} **{d_.strftime('%d %b %Y')}**: {x_}")
+
+
 with tabs[7]:
     c1, c2 = st.columns([1, 2])
     pstart = c1.date_input("Starting from", value=date.today(), format="DD/MM/YYYY", key="pred_date")
@@ -835,13 +1202,23 @@ with tabs[7]:
     else:
         with st.spinner(f"Working out the {kind.lower()}..."):
             if kind == "Day":
-                show_day(pstart, pla, plo, ptz)
+                simple_day(pstart, pla, plo, ptz)
             elif kind == "Week":
-                show_range(pstart, 7, ptz)
+                simple_range(pstart, 7, ptz)
             elif kind == "Month":
-                show_range(pstart, 30, ptz)
+                simple_range(pstart, 30, ptz)
             else:
-                show_year(pstart, ptz)
+                simple_year(pstart, ptz)
+        if tech("pred"):
+            with st.spinner("Adding the technical view..."):
+                if kind == "Day":
+                    show_day(pstart, pla, plo, ptz)
+                elif kind == "Week":
+                    show_range(pstart, 7, ptz)
+                elif kind == "Month":
+                    show_range(pstart, 30, ptz)
+                else:
+                    show_year(pstart, ptz)
         st.caption("Predictions are built from traditional rules applied to this chart. They show tendencies "
                    "and timing, not certainties.")
 
@@ -857,82 +1234,128 @@ def life_for(key, _ch, _md, day_iso):
 RATING_ICON = {"Good": "🟢 Good", "Mixed": "🟡 Mixed", "Challenging": "🔴 Challenging"}
 STAR_TONE = {5: "good", 4: "good", 3: "mixed", 2: "bad", 1: "bad"}
 
+# ---- Life reading -------------------------------------------------------------
+
+
+@st.cache_data(show_spinner=False)
+def life_for(key, _ch, _md, day_iso):
+    return life.life_reading(_ch, _md, ac.to_jd(datetime.fromisoformat(day_iso + "T12:00"), _ch.tz))
+
+
+RATING_ICON = {"Good": "🟢 Good", "Mixed": "🟡 Mixed", "Challenging": "🔴 Challenging"}
+STAR_TONE = {5: "good", 4: "good", 3: "mixed", 2: "bad", 1: "bad"}
+
 with tabs[8]:
     today_iso = datetime.now(ZoneInfo(tz0)).date().isoformat()
     with st.spinner("Building the life reading..."):
         lr = life_for(chart_key(prof), ch, md_list, today_iso)
-    st.subheader(f"Life reading: {ch.name}")
-    chain_txt = " – ".join(p.lord for p in lr["chain"][:2]) if lr["chain"] else "-"
-    cards([("Ascendant", ac.SIGNS[ch.asc_sign], ac.NAKSHATRAS[ac.nak_of(ch.asc)]),
-           ("Moon / birth star", f"{ac.SIGNS[ch.moon_sign]} · {ac.NAKSHATRAS[ch.moon_nak]}", "emotional nature"),
-           ("Strongest planet", lr["strengths"][0][1], ch.planets[lr["strengths"][0][1]]["dignity"].lower()),
-           ("Running period", chain_txt, "Mahadasha – Antardasha")])
-    st.markdown("#### Summary")
-    for s_ in lr["summary"]:
-        st.markdown(f"- {s_}")
-
-    st.markdown("#### Life areas")
+    st.subheader(f"Life report: {ch.name}")
+    st.download_button("Download this report (HTML, printable)", T.report_html(ch, rep).encode("utf-8"),
+                       file_name=f"{ch.name}_life_report.html", mime="text/html")
     cards([(name, "★" * a["stars"] + "☆" * (5 - a["stars"]), a["verdict"], STAR_TONE[a["stars"]])
            for name, a in lr["areas"].items()])
-    for name, a in lr["areas"].items():
-        with st.expander(f"{name}: {'★' * a['stars']}{'☆' * (5 - a['stars'])} {a['verdict']}", expanded=name == "Life"):
-            for d_ in a["details"]:
-                st.markdown(f"- {d_}")
-            c1, c2 = st.columns(2)
-            with c1:
-                st.markdown("**Strengths**")
-                for x in a["strengths"] or ["No strong supporting factor."]:
-                    st.markdown(f"- {x}")
-            with c2:
-                st.markdown("**Watch points**")
-                for x in a["cautions"] or ["No major weakness."]:
-                    st.markdown(f"- {x}")
-            rows = ([{"Period": p["event"], "From": fmt(p["start"], tz0), "To": fmt(p["end"], tz0),
-                      "Outlook": RATING_ICON[p["rating"]]} for p in a["good_periods"]]
-                    + [{"Period": p["event"], "From": fmt(p["start"], tz0), "To": fmt(p["end"], tz0),
-                        "Outlook": RATING_ICON[p["rating"]]} for p in a["hard_periods"]])
-            if rows:
-                st.markdown("**Key periods ahead for this area**")
-                st.dataframe(pd.DataFrame(rows).sort_values("From", key=lambda c: pd.to_datetime(c, format="%d %b %Y")),
-                             hide_index=True, width="stretch")
-            if name == "Health":
-                st.caption("Astrological indications only, not medical advice.")
-
-    st.markdown("#### Life-changing periods and dates")
-    c1, c2, c3 = st.columns([1, 2, 2])
-    upcoming = c1.toggle("Upcoming only", value=True)
-    kinds = c2.multiselect("Show", ["Dasha", "Transit", "Eclipse"], default=["Dasha", "Transit", "Eclipse"])
-    ratings = c3.multiselect("Outlook", ["Good", "Mixed", "Challenging"], default=["Good", "Mixed", "Challenging"])
-    now_j = ac.to_jd(datetime.now(ZoneInfo(tz0)).replace(tzinfo=None), tz0)
-    birth_year = ch.dt_local.year
-    ev_rows = []
-    for e in lr["events"]:
-        if upcoming and e["end"] < now_j:
+    for title, body_ in rep["sections"]:
+        if title in ("Doshas (special conditions)",):
             continue
-        if e["kind"] not in kinds or e["rating"] not in ratings:
+        st.markdown(f"#### {title}")
+        st.markdown(" ".join(body_))
+    st.markdown("#### Lucky for you")
+    lucky_box(rep["lucky"])
+    st.markdown("#### Important periods in your life ahead")
+    _rows = []
+    for e in lr["events"]:
+        if e["end"] < now_jd:
             continue
         sd = ac.jd_to_local(e["start"], tz0)
-        age = sd.year - birth_year - ((sd.month, sd.day) < (ch.dt_local.month, ch.dt_local.day))
-        ev_rows.append({"From": sd.strftime("%d %b %Y"), "To": fmt(e["end"], tz0), "Age": age,
-                        "Event": e["event"], "Outlook": RATING_ICON[e["rating"]], "Areas": e["areas"],
-                        "Guidance": e["guidance"],
-                        "Now": "▶" if e["start"] <= now_j < e["end"] else ""})
-    df_ev = pd.DataFrame(ev_rows)
-    if df_ev.empty:
-        st.info("No periods match the filters.")
-    else:
-        st.dataframe(df_ev[["Now", "From", "To", "Age", "Event", "Outlook", "Guidance", "Areas"]],
-                     hide_index=True, width="stretch", height=560,
-                     column_config={"Guidance": st.column_config.TextColumn(width="large"),
-                                    "Event": st.column_config.TextColumn(width="large")})
-        st.download_button("Download table (CSV)", df_ev.to_csv(index=False).encode("utf-8"),
-                           file_name=f"{ch.name}_life_periods.csv", mime="text/csv")
-    st.caption("Dasha periods are rated from the functional nature and strength of the period lords and their "
-               "placement from each other. Transit milestones and eclipses on key natal points are added. "
-               "Ratings show tendencies, not certainties.")
+        age = sd.year - ch.dt_local.year - ((sd.month, sd.day) < (ch.dt_local.month, ch.dt_local.day))
+        _rows.append({"Now": "▶" if e["start"] <= now_jd < e["end"] else "", "From": sd.strftime("%b %Y"),
+                      "To": ac.jd_to_local(e["end"], tz0).strftime("%b %Y"), "Age": age,
+                      "What happens": life_event_plain(e),
+                      "Outlook": {"Good": "🟢 Good", "Mixed": "🟡 Mixed", "Challenging": "🔴 Needs care"}[e["rating"]],
+                      "What to do": e["guidance"], "_start": e["start"]})
+    _show = st.radio("Show", ["Next 10 years", "All ahead"], horizontal=True, key="life_span")
+    _lim = now_jd + 365.25 * 10
+    for r_ in _rows:
+        if _show == "Next 10 years" and r_["_start"] > _lim:
+            continue
+        _when = r_["From"] if r_["From"] == r_["To"] else f"{r_['From']} – {r_['To']}"
+        st.markdown(f"{r_['Outlook'].split(' ')[0]} **{_when} (age {r_['Age']}): {r_['What happens']}**"
+                    f"{' ← now' if r_['Now'] else ''}  \n{r_['What to do']}")
+    if tech("life"):
+        st.subheader(f"Life reading: {ch.name}")
+        chain_txt = " – ".join(p.lord for p in lr["chain"][:2]) if lr["chain"] else "-"
+        cards([("Ascendant", ac.SIGNS[ch.asc_sign], ac.NAKSHATRAS[ac.nak_of(ch.asc)]),
+               ("Moon / birth star", f"{ac.SIGNS[ch.moon_sign]} · {ac.NAKSHATRAS[ch.moon_nak]}", "emotional nature"),
+               ("Strongest planet", lr["strengths"][0][1], ch.planets[lr["strengths"][0][1]]["dignity"].lower()),
+               ("Running period", chain_txt, "Mahadasha – Antardasha")])
+        st.markdown("#### Summary")
+        for s_ in lr["summary"]:
+            st.markdown(f"- {s_}")
 
-# ---- Past life ----------------------------------------------------------------------
-import pastlife  # noqa: E402
+        st.markdown("#### Life areas")
+        cards([(name, "★" * a["stars"] + "☆" * (5 - a["stars"]), a["verdict"], STAR_TONE[a["stars"]])
+               for name, a in lr["areas"].items()])
+        for name, a in lr["areas"].items():
+            with st.expander(f"{name}: {'★' * a['stars']}{'☆' * (5 - a['stars'])} {a['verdict']}", expanded=name == "Life"):
+                for d_ in a["details"]:
+                    st.markdown(f"- {d_}")
+                c1, c2 = st.columns(2)
+                with c1:
+                    st.markdown("**Strengths**")
+                    for x in a["strengths"] or ["No strong supporting factor."]:
+                        st.markdown(f"- {x}")
+                with c2:
+                    st.markdown("**Watch points**")
+                    for x in a["cautions"] or ["No major weakness."]:
+                        st.markdown(f"- {x}")
+                rows = ([{"Period": p["event"], "From": fmt(p["start"], tz0), "To": fmt(p["end"], tz0),
+                          "Outlook": RATING_ICON[p["rating"]]} for p in a["good_periods"]]
+                        + [{"Period": p["event"], "From": fmt(p["start"], tz0), "To": fmt(p["end"], tz0),
+                            "Outlook": RATING_ICON[p["rating"]]} for p in a["hard_periods"]])
+                if rows:
+                    st.markdown("**Key periods ahead for this area**")
+                    st.dataframe(pd.DataFrame(rows).sort_values("From", key=lambda c: pd.to_datetime(c, format="%d %b %Y")),
+                                 hide_index=True, width="stretch")
+                if name == "Health":
+                    st.caption("Astrological indications only, not medical advice.")
+
+        st.markdown("#### Life-changing periods and dates")
+        c1, c2, c3 = st.columns([1, 2, 2])
+        upcoming = c1.toggle("Upcoming only", value=True)
+        kinds = c2.multiselect("Show", ["Dasha", "Transit", "Eclipse"], default=["Dasha", "Transit", "Eclipse"])
+        ratings = c3.multiselect("Outlook", ["Good", "Mixed", "Challenging"], default=["Good", "Mixed", "Challenging"])
+        now_j = ac.to_jd(datetime.now(ZoneInfo(tz0)).replace(tzinfo=None), tz0)
+        birth_year = ch.dt_local.year
+        ev_rows = []
+        for e in lr["events"]:
+            if upcoming and e["end"] < now_j:
+                continue
+            if e["kind"] not in kinds or e["rating"] not in ratings:
+                continue
+            sd = ac.jd_to_local(e["start"], tz0)
+            age = sd.year - birth_year - ((sd.month, sd.day) < (ch.dt_local.month, ch.dt_local.day))
+            ev_rows.append({"From": sd.strftime("%d %b %Y"), "To": fmt(e["end"], tz0), "Age": age,
+                            "Event": e["event"], "Outlook": RATING_ICON[e["rating"]], "Areas": e["areas"],
+                            "Guidance": e["guidance"],
+                            "Now": "▶" if e["start"] <= now_j < e["end"] else ""})
+        df_ev = pd.DataFrame(ev_rows)
+        if df_ev.empty:
+            st.info("No periods match the filters.")
+        else:
+            st.dataframe(df_ev[["Now", "From", "To", "Age", "Event", "Outlook", "Guidance", "Areas"]],
+                         hide_index=True, width="stretch", height=560,
+                         column_config={"Guidance": st.column_config.TextColumn(width="large"),
+                                        "Event": st.column_config.TextColumn(width="large")})
+            st.download_button("Download table (CSV)", df_ev.to_csv(index=False).encode("utf-8"),
+                               file_name=f"{ch.name}_life_periods.csv", mime="text/csv")
+        st.caption("Dasha periods are rated from the functional nature and strength of the period lords and their "
+                   "placement from each other. Transit milestones and eclipses on key natal points are added. "
+                   "Ratings show tendencies, not certainties.")
+
+    # ---- Past life ----------------------------------------------------------------------
+    import pastlife  # noqa: E402
+
+# ---- Past life ----------------------------------------------------------------
 
 with tabs[9]:
     pl = pastlife.past_life_report(ch)
@@ -981,9 +1404,13 @@ with tabs[9]:
     st.caption("Past-life readings are symbolic and traditional. They cannot be verified and are best used "
                "for reflection on patterns and lessons, not as fact.")
 
-# ---- About --------------------------------------------------------------------------
+# ---- About --------------------------------------------------------------------
 with tabs[10]:
     st.markdown("""
+### How to read this app
+Every tab starts with a plain-language reading. Turn on **Show technical details** at the bottom of a tab to see
+the degrees, tables and classical terms that the reading is built from.
+
 ### What this app calculates
 - **Positions:** Swiss Ephemeris (built-in Moshier ephemeris), sidereal, with your chosen ayanamsa and node.
   These are the same calculations used by Jagannatha Hora, Parashara's Light and AstroSage; small differences
