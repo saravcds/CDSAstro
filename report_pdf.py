@@ -98,7 +98,7 @@ def _footer(name):
 
 
 def build(name: str, born: str, cards: list, areas: list, sections: list, planets: list, strength: list,
-          lucky: list, periods: list, year: dict | None) -> bytes:
+          lucky: list, periods: list, year: dict | None, lalkitab: tuple | None = None) -> bytes:
     """
     cards: (label, value, sub, tone); areas: (name, stars, verdict);
     sections: (title, [sentences]); planets: (title, text, tone); strength: (planet, percent, level);
@@ -139,6 +139,18 @@ def build(name: str, born: str, cards: list, areas: list, sections: list, planet
                colWidths=[W * 0.3, W * 0.7])
     lt.setStyle(TableStyle([("LINEBELOW", (0, 0), (-1, -1), 0.4, LINE), ("VALIGN", (0, 0), (-1, -1), "TOP")]))
     f.append(lt)
+    if lalkitab:
+        top, rows_lk = lalkitab
+        f.append(PageBreak())
+        f.append(Paragraph("Lal Kitab remedies", S_H))
+        f.append(Paragraph("Lal Kitab is a separate, remedy-focused system. Remedies are simple and optional.", S_SMALL))
+        if top:
+            f.append(Paragraph("Most useful for you now", S_H3))
+            for p, r in top:
+                f.append(Paragraph(f"<b>{_clean(p)}:</b> {_clean(r)}", S_P))
+        for title, text, tone in rows_lk:
+            dot = f'<font color="{TONE.get(tone, LINE).hexval().replace("0x", "#")}">&#9632;</font> '
+            f.append(KeepTogether([Paragraph(dot + _clean(title), S_H3), Paragraph(_clean(text), S_P)]))
     if year:
         f.append(PageBreak())
         f.append(Paragraph(_clean(year["title"]), S_H))

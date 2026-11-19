@@ -344,6 +344,7 @@ import predict as pr  # noqa: E402
 import simple_text as T  # noqa: E402
 import shadbala  # noqa: E402
 import varsha  # noqa: E402
+import lalkitab  # noqa: E402
 
 ICON = {"good": "🟢", "bad": "🔴", "mixed": "🟡", "care": "🟠", "": "⚪"}
 
@@ -1367,65 +1368,17 @@ def pdf_for(key, day_iso):
     except Exception:
         pass
     born = (f"Born {ch.dt_local.strftime('%d %b %Y, %I:%M %p')}, {ch.place or ''}")
+    lk_ = [(f"{r['planet']} in your {r['house']} house ({r['status']})",
+            f"Gives: {r['gift']} Watch: {r['watch']} Remedies: {' '.join(r['remedies'])}",
+            {"helpful": "good", "mixed": "mixed", "troubled": "bad"}[r["status"]]) for r in lalkitab.reading(ch)]
+    top_ = lalkitab.top_remedies(ch, lr_["chain"])
     return report_pdf.build(ch.name, born, cards_, areas_, rp["sections"], T.planet_lines(ch), strength_,
-                            rp["lucky"], per_, year_)
+                            rp["lucky"], per_, year_, lalkitab=(top_, lk_))
 
 
 RATING_ICON = {"Good": "🟢 Good", "Mixed": "🟡 Mixed", "Challenging": "🔴 Challenging"}
 STAR_TONE = {5: "good", 4: "good", 3: "mixed", 2: "bad", 1: "bad"}
 
-# ---- Life reading -------------------------------------------------------------
-
-
-@st.cache_data(show_spinner=False)
-def life_for(key, _ch, _md, day_iso):
-    return life.life_reading(_ch, _md, ac.to_jd(datetime.fromisoformat(day_iso + "T12:00"), _ch.tz))
-
-
-@st.cache_data(show_spinner="Preparing the PDF report...")
-def pdf_for(key, day_iso):
-    import report_pdf
-    lr_ = life_for(key, ch, md_list, day_iso)
-    rp = report_for(key, ch, md_list, day_iso)
-    njd = ac.to_jd(datetime.fromisoformat(day_iso + "T12:00"), tz0)
-    moon_ = ch.planets["Moon"]
-    cards_ = [("Rising sign (Lagna)", ac.SIGNS[ch.asc_sign], "nature and body", ""),
-              ("Moon sign (Rashi)", ac.SIGNS[moon_["sign"]], "mind and emotions", ""),
-              ("Birth star", ac.NAKSHATRAS[moon_["nak"]], f"quarter {moon_['pada']}", ""),
-              ("Running period", " - ".join(p_.lord for p_ in lr_["chain"][:2]) or "-", "main and sub period", "")]
-    areas_ = [(n_, a_["stars"], a_["verdict"]) for n_, a_ in lr_["areas"].items()]
-    sbr = shadbala.cached(ch)["planets"]
-    strength_ = sorted([(p_, round(v_["ratio"] * 100), shadbala.strength_word(v_["ratio"]).capitalize())
-                        for p_, v_ in sbr.items()], key=lambda r: -r[1])
-    tone_ = {"Good": "good", "Mixed": "mixed", "Challenging": "bad"}
-    per_ = []
-    for e in lr_["events"]:
-        if e["end"] < njd or e["start"] > njd + 365.25 * 10:
-            continue
-        a_, b_ = ac.jd_to_local(e["start"], tz0).strftime("%b %Y"), ac.jd_to_local(e["end"], tz0).strftime("%b %Y")
-        per_.append((a_ if a_ == b_ else f"{a_} - {b_}", life_event_plain(e), e["guidance"], tone_[e["rating"]]))
-    year_ = None
-    try:
-        y_ = datetime.fromisoformat(day_iso).year
-        if varsha.solar_return(ch, y_) > njd:
-            y_ -= 1
-        v_ = varsha.varshaphal(ch, y_)
-        pr_ = varsha.plain_reading(v_)
-        year_ = dict(title=f"Your birthday year {ac.jd_to_local(v_['start'], tz0).strftime('%b %Y')} - "
-                           f"{ac.jd_to_local(v_['end'], tz0).strftime('%b %Y')}",
-                     summary=pr_["summary"],
-                     phases=[(f"{ac.jd_to_local(m['start'], tz0).strftime('%d %b')} - "
-                              f"{ac.jd_to_local(m['end'], tz0).strftime('%d %b %Y')}", f"{m['lord']} phase",
-                              m["text"], m["tone"]) for m in pr_["periods"]])
-    except Exception:
-        pass
-    born = (f"Born {ch.dt_local.strftime('%d %b %Y, %I:%M %p')}, {ch.place or ''}")
-    return report_pdf.build(ch.name, born, cards_, areas_, rp["sections"], T.planet_lines(ch), strength_,
-                            rp["lucky"], per_, year_)
-
-
-RATING_ICON = {"Good": "🟢 Good", "Mixed": "🟡 Mixed", "Challenging": "🔴 Challenging"}
-STAR_TONE = {5: "good", 4: "good", 3: "mixed", 2: "bad", 1: "bad"}
 
 with tabs[8]:
     today_iso = datetime.now(ZoneInfo(tz0)).date().isoformat()
@@ -1452,6 +1405,24 @@ with tabs[8]:
         st.markdown(" ".join(body_))
     st.markdown("#### Lucky for you")
     lucky_box(rep["lucky"])
+    st.markdown("#### Lal Kitab remedies")
+    st.caption("Lal Kitab is a separate, remedy-focused system. It does not change the ratings above. "
+               "Remedies are simple and optional; follow the ones that feel right to you.")
+    _top = lalkitab.top_remedies(ch, chain)
+    if _top:
+        boxes([(f"{p_} remedy", r_, "") for p_, r_ in _top])
+    for r_ in lalkitab.reading(ch):
+        _ic = {"helpful": "🟢", "mixed": "🟡", "troubled": "🔴"}[r_["status"]]
+        st.markdown(f"{_ic} **{r_['planet']} in your {r_['house']}{'st' if r_['house'] == 1 else 'nd' if r_['house'] == 2 else 'rd' if r_['house'] == 3 else 'th'} house** "
+                    f"({r_['status']}: {r_['why']})  \n"
+                    f"**Gives:** {r_['gift']} **Watch:** {r_['watch']}  \n"
+                    f"**Remedies:** " + " ".join(r_["remedies"]))
+    if tech("lalkitab"):
+        st.dataframe(pd.DataFrame([{"Planet": r_["planet"], "Lal Kitab house": r_["house"],
+                                    "Lal Kitab sign": ac.SIGNS[r_["house"] - 1], "Status": r_["status"],
+                                    "Reason": r_["why"], "Related people": r_["relation"]}
+                                   for r_ in lalkitab.reading(ch)]), hide_index=True, width="stretch")
+        st.caption("Lal Kitab keeps each planet in its birth-chart house and treats the 1st house as Aries.")
     st.markdown("#### Important periods in your life ahead")
     _rows = []
     for e in lr["events"]:
