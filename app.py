@@ -345,6 +345,7 @@ import simple_text as T  # noqa: E402
 import shadbala  # noqa: E402
 import varsha  # noqa: E402
 import lalkitab  # noqa: E402
+import karmic  # noqa: E402
 
 ICON = {"good": "🟢", "bad": "🔴", "mixed": "🟡", "care": "🟠", "": "⚪"}
 
@@ -860,6 +861,36 @@ with tabs[6]:
         boxes([(f"{other} for {sel}", f"A '{ac.TARA_MEANING[_ta[0]]}' influence.", _ta[1]),
                (f"{sel} for {other}", f"A '{ac.TARA_MEANING[_tb[0]]}' influence.", _tb[1]),
                ("Mind and mood", _m, _mt), ("Personal style", _a, _at)])
+        st.markdown("#### Karmic synastry (past-life connection)")
+        st.caption("Traditional past-life signs between the two charts. This kind of reading is symbolic and "
+                   "can't be proven, so treat it as a way to understand the pattern, not as fact.")
+        kr = karmic.karmic_synastry(ch, ob)
+        cards([("Past-life link", kr["verdict"], "", kr["tone"]),
+               ("Ally signs", str(kr["scores"]["ally"]), "friendship and support", "good"),
+               ("Duty signs", str(kr["scores"]["duty"]), "debts or duties to settle", "mixed"),
+               ("Rivalry signs", str(kr["scores"]["rival"]), "friction carried over",
+                "bad" if kr["scores"]["rival"] >= 2 else "")])
+        st.markdown(kr["headline"])
+        if kr["bond"]:
+            st.markdown("**Signs of an old bond**")
+            for x in kr["bond"]:
+                st.markdown(f"- {x}")
+        st.markdown("**What each is to the other**")
+        for x in kr["roles"]:
+            st.markdown(f"- {x}")
+        st.markdown(f"**{kr['story'].split(':')[0]}:**{kr['story'].split(':', 1)[1]}")
+        if kr["cautions"]:
+            st.markdown("**For this life**")
+            for x in kr["cautions"]:
+                st.markdown(f"- {x}")
+        if st.toggle("Show past-life contact details", key="tech_karmic",
+                     help="The close planet contacts the past-life reading is built from."):
+            st.dataframe(pd.DataFrame([{"From": c["frm"], "Planet": c["planet"], "Contact": c["kind"],
+                                        "To": c["to"], "Point": c["point"], "Orb (°)": round(c["orb"], 1)}
+                                       for c in kr["contacts"]] or [{"From": "-", "Planet": "-", "Contact": "-",
+                                                                     "To": "-", "Point": "-", "Orb (°)": 0.0}]),
+                         hide_index=True, width="stretch")
+            st.caption("Close contacts (within 6°) from Jupiter, Saturn, Rahu and Ketu to the other chart's key points.")
         if tech("compat"):
             if mode.startswith("Marriage"):
                 pass
