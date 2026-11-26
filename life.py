@@ -344,6 +344,24 @@ def eclipse_hits(ch: ac.Chart, j0: float, years: int = 12, orb: float = 3.0) -> 
 # Full reading
 # ---------------------------------------------------------------------------
 
+def _spouse_line(ch: ac.Chart, sex: str) -> str:
+    """Plain sentence on the classical significator of the husband or wife."""
+    if sex not in ("male", "female"):
+        return ("Spouse significator: Venus is used, as sex is not set in the profile. "
+                "Set it to read the husband's or wife's significator correctly.")
+    k, who = ("Jupiter", "husband") if sex == "female" else ("Venus", "wife")
+    s = planet_strength(ch, k)
+    d = ch.planets[k]
+    word = ("strong, a good sign for a supportive and respected " + who if s >= 1.5 else
+            "weak, so the " + who + " may feel less supportive at times; patience and remedies help" if s <= -1 else
+            "of average strength: the bond grows with effort")
+    return (f"{k}, the traditional significator of the {who}, is in your {_ord(d['house'])} house and is {word}.")
+
+
+def _ord(n: int) -> str:
+    return {1: "1st", 2: "2nd", 3: "3rd"}.get(n, f"{n}th")
+
+
 def life_reading(ch: ac.Chart, md_list: list, now_jd: float) -> dict:
     P = ch.planets
     periods = dasha_periods(ch, md_list)
@@ -475,10 +493,13 @@ def life_reading(ch: ac.Chart, md_list: list, now_jd: float) -> dict:
     if mk["from_asc"]:
         extra.append((-0.5, f"Mars in house {mk['houses'][0]} (Mars dosha from the Ascendant)"))
     d9 = ac.varga_chart(ch, 9)
-    vd9 = ac.dignity("Venus", d9["Venus"])
+    sex = getattr(ch, "sex", "") or ""
+    # Classical spouse significator: Venus for a man's wife, Jupiter for a woman's husband
+    spouse_k = "Jupiter" if sex == "female" else "Venus"
+    vd9 = ac.dignity(spouse_k, d9[spouse_k])
     extra.append((0.5 if vd9 in ("Exalted", "Own sign", "Friendly sign") else -0.5 if vd9 in ("Debilitated", "Enemy sign") else 0,
-                  f"In the marriage chart (D9), Venus is {vd9.lower()}"))
-    a = _area(ch, {7: 2, 2: 0.5, 4: 0.3}, ["Venus"], extra)
+                  f"In the marriage chart (D9), {spouse_k} is {vd9.lower()}"))
+    a = _area(ch, {7: 2, 2: 0.5, 4: 0.3}, ["Jupiter", "Venus"] if sex == "female" else ["Venus"], extra)
     s7 = (ch.asc_sign + 6) % 12
     lord7 = ch.lord_of_house(7)
     a["details"] = [
@@ -488,6 +509,7 @@ def life_reading(ch: ac.Chart, md_list: list, now_jd: float) -> dict:
         f"Darakaraka (spouse significator): {ac.chara_karakas(ch)[6][1]}.",
         "Mars dosha: " + ("present from the Ascendant" if mk["from_asc"] else "not from the Ascendant")
         + (", present from the Moon" if mk["from_moon"] else "") + ".",
+        _spouse_line(ch, sex),
     ]
     a["houses"] = {7}
     areas["Marriage"] = a

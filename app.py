@@ -194,6 +194,10 @@ with st.sidebar:
     with st.expander("Add or edit a person", expanded=not names):
         base = profiles.get(sel, {}) if (sel and st.checkbox("Edit selected person", value=False)) else {}
         nm = st.text_input("Name", value=base.get("name", ""))
+        _sex_opts = ["Not specified", "Male", "Female"]
+        _sex_val = {"male": "Male", "female": "Female"}.get(base.get("sex", ""), "Not specified")
+        sex_in = st.radio("Sex", _sex_opts, index=_sex_opts.index(_sex_val), horizontal=True,
+                          help="Used to read the husband's or wife's significator and to set groom and bride in matching.")
         bd = st.date_input("Date of birth", value=date.fromisoformat(base["date"]) if base else date(1985, 1, 1),
                            min_value=date(1900, 1, 1), max_value=date(2100, 12, 31), format="DD/MM/YYYY")
         bt = st.time_input("Time of birth (24h)",
@@ -217,7 +221,8 @@ with st.sidebar:
         if st.button("Save person", type="primary", width="stretch", disabled=not nm.strip()):
             name = nm.strip()
             profiles[name] = dict(name=name, date=bd.isoformat(), time=bt.strftime("%H:%M"),
-                                  lat=lat, lon=lon, tz=tz, place=place)
+                                  lat=lat, lon=lon, tz=tz, place=place,
+                                  sex={"Male": "male", "Female": "female"}.get(sex_in, ""))
             if persist(f"Save {name}"):
                 st.session_state.flash = f"Saved {name} to {store.label}."
             st.session_state.pending_sel = name
@@ -273,12 +278,14 @@ def yogini_for(key, _ch, yl):
 
 
 def get_chart(p: dict) -> ac.Chart:
-    return chart_for(p["name"], p["date"], p["time"], p["tz"], float(p["lat"]), float(p["lon"]),
-                     p.get("place", ""), ayan, node)
+    c = chart_for(p["name"], p["date"], p["time"], p["tz"], float(p["lat"]), float(p["lon"]),
+                  p.get("place", ""), ayan, node)
+    c.sex = p.get("sex", "") or ""
+    return c
 
 
 def chart_key(p: dict) -> tuple:
-    return (p["name"], p["date"], p["time"], p["tz"], p["lat"], p["lon"], ayan, node, year_len)
+    return (p["name"], p["date"], p["time"], p["tz"], p["lat"], p["lon"], ayan, node, year_len, p.get("sex", ""))
 
 
 SOUTH_LAYOUT = [[11, 0, 1, 2], [10, None, None, 3], [9, None, None, 4], [8, 7, 6, 5]]
@@ -836,7 +843,18 @@ with tabs[6]:
         mode = c2.radio("Type", ["Professional / friendship", "Marriage (Ashtakoota)"], horizontal=True)
         ob = get_chart(profiles[other])
         if mode.startswith("Marriage"):
-            groom_is_a = st.radio("Groom", [sel, other], horizontal=True) == sel
+            _sa, _sb = ch.sex, ob.sex
+            if {_sa, _sb} == {"male", "female"}:
+                groom_is_a = _sa == "male"
+                st.caption(f"Groom: {sel if groom_is_a else other} · Bride: {other if groom_is_a else sel} "
+                           "(from the profiles).")
+            else:
+                if _sa and _sa == _sb:
+                    st.info("Both profiles have the same sex. Ashtakoota is designed for a groom and a bride, "
+                            "so treat the score as a general compatibility guide.")
+                elif not (_sa and _sb):
+                    st.caption("Tip: set Male or Female in each profile and the app picks groom and bride for you.")
+                groom_is_a = st.radio("Groom", [sel, other], horizontal=True) == sel
             g, b = (ch, ob) if groom_is_a else (ob, ch)
             mr = T.matching_reading(g, b)
             cards([("Match score", f"{mr['total']:g} / 36", mr["verdict"],

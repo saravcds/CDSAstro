@@ -374,7 +374,7 @@ def past_life_story(a: ac.Chart, b: ac.Chart) -> dict:
     guide += [x.name for x, ov in ((a, ov_ba), (b, ov_ab))      # x's Jupiter in the other's 9th or 10th
               if any(p == "Jupiter" for h in (9, 10) for p in ov.get(h, [])) and x.name not in guide]
     if heart and dk_link:
-        kind = "a bond of the heart: close family or the dearest of companions"
+        kind = "a close family bond, or the dearest of companions"
         why = (f"({_and(sorted(set(love)))} fall in each other's houses of love and partnership, "
                f"and the partner planet links them)")
         vote(7, 2)

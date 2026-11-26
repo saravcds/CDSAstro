@@ -461,7 +461,7 @@ def my_report(ch: ac.Chart, md_list: list, now_jd: float) -> dict:
     m = A["Marriage"]
     mk = ac.manglik(ch)
     S.append(("Love and marriage", [
-        asc["l"], STARS_SENT[m["stars"]], m["details"][0],
+        asc["l"], STARS_SENT[m["stars"]], m["details"][0], m["details"][-1],
         ac.manglik_text(ch),
         ("Good periods for relationships: " + "; ".join(periods("Marriage", "good")) + ".") if periods("Marriage", "good") else "",
         ("Periods that need care in relationships: " + "; ".join(periods("Marriage", "bad")) + ".") if periods("Marriage", "bad") else "",

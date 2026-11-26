@@ -295,6 +295,7 @@ class Chart:
     mc: float = 0.0
     cusps: list = field(default_factory=list)
     planets: dict = field(default_factory=dict)
+    sex: str = ""   # "male", "female" or "" (not specified); used for spouse significators and matching
 
     @property
     def asc_sign(self) -> int:
