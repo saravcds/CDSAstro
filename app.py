@@ -878,7 +878,17 @@ with tabs[6]:
         st.markdown("**What each is to the other**")
         for x in kr["roles"]:
             st.markdown(f"- {x}")
-        st.markdown(f"**{kr['story'].split(':')[0]}:**{kr['story'].split(':', 1)[1]}")
+        _sd = kr["story_detail"]
+        st.markdown("**The likely past-life story**")
+        _rows = [("Who they were", _sd["roles"]), ("The bond", _sd["bond"]), ("Where", _sd["setting"])]
+        _rows += [("Inner circle", x) for x in _sd["extra"]]
+        if _sd["unfinished"]:
+            _rows.append(("Left unfinished", _sd["unfinished"]))
+        if _sd["friction"]:
+            _rows.append(("Friction", _sd["friction"]))
+        _rows.append(("This life", _sd["task"]))
+        for _k, _v in _rows:
+            st.markdown(f"- **{_k}:** {_v}")
         if kr["cautions"]:
             st.markdown("**For this life**")
             for x in kr["cautions"]:

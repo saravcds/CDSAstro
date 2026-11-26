@@ -300,6 +300,171 @@ def karmic_synastry(a: ac.Chart, b: ac.Chart) -> dict:
         verdict, tone = "Allies from before", "good"
         headline = (f"By the traditional past-life signs, {A} and {B} were allies"
                     + (f", most likely {parts[0]}" if parts else "") + ". There is little sign of enmity.")
+    detail = past_life_story(a, b)
+    story = "The likely past-life story: " + detail["text"]
     return dict(verdict=verdict, tone=tone, headline=headline, bond=bond, roles=roles_lines, story=story,
+                story_detail=detail,
                 cautions=cautions, scores=dict(ally=ally, duty=duty, rival=rival), contacts=cs,
                 overlays=dict(a_in_b=ov_ab, b_in_a=ov_ba))
+
+
+# ---------------------------------------------------------------------------
+# Detailed past-life story built from each pair's own signals
+# ---------------------------------------------------------------------------
+ROLE_NOUN = {"Sun": "a ruler or royal official", "Moon": "a caretaker or keeper of the household",
+             "Mars": "a commander or warrior", "Mercury": "a merchant, scribe or messenger",
+             "Jupiter": "a teacher, priest or counsellor", "Venus": "an artist, courtier or companion",
+             "Saturn": "a loyal servant, labourer or ascetic"}
+SETTING = {12: "away from home: in a foreign land, a temple or ashram, or a large institution",
+           10: "in a royal court or seat of government",
+           9: "around a temple, a school of learning or a pilgrimage",
+           4: "in the same home or homeland",
+           6: "in an army, a hospital or a life of service",
+           8: "in a hidden world of secrets, healing or inheritance",
+           7: "in a marriage or a trading partnership",
+           5: "in a school, a place of art or around children",
+           3: "on the road: soldiers, messengers or travelling traders",
+           11: "in a guild, trade network or circle of patrons",
+           2: "in a family business or one family line",
+           1: "in the same family or clan"}
+UNFINISHED = {1: "a promise about each other's well-being", 2: "a family or money obligation",
+              3: "a task or campaign they started together", 4: "a duty to a home or family",
+              5: "a duty to children or students", 6: "a debt or a dispute that was never settled",
+              7: "a partnership or marriage vow", 8: "a secret or an inheritance left unresolved",
+              9: "a vow to a teacher, faith or father figure", 10: "a public duty or a mission at work",
+              11: "a shared goal that was never reached", 12: "a sacrifice or a journey left incomplete"}
+
+
+def _house_in(target: ac.Chart, lon: float) -> int:
+    return target.house_of_sign(ac.sign_of(lon))
+
+
+def past_life_story(a: ac.Chart, b: ac.Chart) -> dict:
+    """A specific story for this pair: roles, relationship, setting, debts and this life's task."""
+    A, B = a.name, b.name
+    aka, bka = ac.chara_karakas(a)[0][1], ac.chara_karakas(b)[0][1]
+    adk, bdk = ac.chara_karakas(a)[-1][1], ac.chara_karakas(b)[-1][1]
+    ov_ab, ov_ba = overlays(a, b), overlays(b, a)   # b's planets in a's houses; a's planets in b's houses
+    cs = contacts(a, b) + contacts(b, a)
+    house_votes: dict[int, float] = {}
+
+    def vote(h, w):
+        house_votes[h] = house_votes.get(h, 0) + w
+
+    # 1. Roles from soul planets
+    roles = (f"{A} was {ROLE_NOUN[aka]} (soul planet {aka}), and {B} was {ROLE_NOUN[bka]} (soul planet {bka})."
+             if aka != bka else f"Both {A} and {B} were {ROLE_NOUN[aka].replace('a ', '', 1)}s at heart (both have "
+             f"soul planet {aka})." if False else
+             f"{A} and {B} share the same soul planet, {aka}: both carry the nature of {ROLE_NOUN[aka]}.")
+
+    # 2. Nature of the bond, from where the personal planets fall
+    def falls(x_ov, planets, houses):
+        return [p for h in houses for p in x_ov.get(h, []) if p in planets]
+    kind, why = None, ""
+    love = falls(ov_ab, {"Venus", "Moon", "Mars"}, (5, 7)) + falls(ov_ba, {"Venus", "Moon", "Mars"}, (5, 7))
+    heart = "Venus" in love and len(set(love)) >= 2   # needs Venus plus another personal planet
+    dk_link = (a.planets[adk]["sign"] in (b.planets["Moon"]["sign"], b.planets["Venus"]["sign"], b.asc_sign) or
+               b.planets[bdk]["sign"] in (a.planets["Moon"]["sign"], a.planets["Venus"]["sign"], a.asc_sign))
+    lead_a = falls(ov_ba, {"Sun", "Mars", "Venus"}, (10,))   # a's planets in b's 10th
+    lead_b = falls(ov_ab, {"Sun", "Mars", "Venus"}, (10,))
+    sib = falls(ov_ab, {"Mars", "Mercury", "Sun"}, (3, 11)) + falls(ov_ba, {"Mars", "Mercury", "Sun"}, (3, 11))
+    fam_ab, fam_ba = falls(ov_ab, {"Sun", "Moon"}, (4, 9)), falls(ov_ba, {"Sun", "Moon"}, (4, 9))
+    guide = [x for x, y in ((A, B), (B, A)) if any(c["frm"] == x and c["planet"] == "Jupiter"
+                                                    and c["point"] in ("Asc", "Moon", "Sun") for c in cs)]
+    guide += [x.name for x, ov in ((a, ov_ba), (b, ov_ab))      # x's Jupiter in the other's 9th or 10th
+              if any(p == "Jupiter" for h in (9, 10) for p in ov.get(h, [])) and x.name not in guide]
+    if heart and dk_link:
+        kind = "a bond of the heart: close family or the dearest of companions"
+        why = (f"({_and(sorted(set(love)))} fall in each other's houses of love and partnership, "
+               f"and the partner planet links them)")
+        vote(7, 2)
+    elif lead_a or lead_b:
+        x, y = (A, B) if len(lead_a) >= len(lead_b) else (B, A)
+        ps = lead_a if x == A else lead_b
+        kind = f"a leader and a trusted right hand, with {x} in charge"
+        why = f"({x}'s {_and(ps)} fall{'s' if len(ps) == 1 else ''} in {y}'s 10th house of career and authority)"
+        vote(10, 2)
+    elif guide:
+        x = guide[0]
+        y = B if x == A else A
+        kind = f"a teacher and a student, with {x} as the guide"
+        why = f"({x}'s Jupiter, the planet of the guru, is tied to {y}'s chart)"
+        vote(9, 2)
+    elif fam_ab or fam_ba:
+        kind = "parent and child, or an elder and the one they raised"
+        why = "(the Sun or Moon of one falls in the other's 4th or 9th house)"
+        vote(4, 2)
+    elif sib:
+        kind = "brothers, or comrades who fought and worked side by side"
+        why = f"({_and(sorted(set(sib)))} link{'s' if len(set(sib)) == 1 else ''} their 3rd and 11th houses of siblings and allies)"
+        vote(3, 2)
+    elif love:
+        kind = "close companions with real affection"
+        why = (f"({_and(sorted(set(love)))} fall{'s' if len(set(love)) == 1 else ''} in each other's houses of "
+               f"affection and partnership)")
+        vote(5, 1)
+    else:
+        kind = "co-workers bound by a shared duty"
+        why = ""
+    bond = f"They were most likely {kind} {why}".strip() + "."
+
+    # 3. Setting, from where the strongest links fall
+    for c in cs:
+        tgt = a if c["to"] == A else b
+        if c["planet"] in ("Saturn", "Rahu", "Ketu", "Jupiter"):
+            vote(_house_in(tgt, _pts(tgt)[c["point"]]), 1.5)
+    for h, ps in list(ov_ab.items()) + list(ov_ba.items()):
+        for p in ps:
+            vote(h, 1.0 if p in ("Sun", "Moon", "Saturn", "Jupiter", "Rahu") else 0.5)
+    for x, y in ((a, b), (b, a)):
+        if x.house_of_sign(y.asc_sign) == 12 or x.house_of_sign(y.planets["Ketu"]["sign"]) == 12:
+            vote(12, 2)
+    top = sorted(house_votes, key=lambda h: -house_votes[h])
+    setting = f"The bond played out {SETTING[top[0]]}"
+    if len(top) > 1 and house_votes[top[1]] >= house_votes[top[0]] * 0.75 and top[1] != top[0]:
+        setting += f", with ties {SETTING[top[1]].split(':')[0].replace('away from home', 'far from home')}"
+    setting += "."
+
+    # 4. Inner circle and protection
+    extra = []
+    for x, y, ov in ((a, b, ov_ab), (b, a, ov_ba)):   # ov: y's planets in x's houses
+        inner = [p for p in ov.get(4, []) if p in ("Sun", "Moon", "Venus", "Jupiter")]
+        if inner:
+            extra.append(f"{y.name} was treated as part of {x.name}'s household, not as hired help "
+                         f"({y.name}'s {_and(inner)} in {x.name}'s 4th house).")
+    for c in cs:
+        if c["planet"] == "Jupiter" and c["point"] in ("Asc", "Moon", "Sun"):
+            extra.append(f"{c['frm']} protected and sponsored {c['to']} ({c['frm']}'s Jupiter on "
+                         f"{c['to']}'s {POINT_NAME[c['point']]}).")
+            break
+
+    # 5. What was left unfinished, from Saturn and Ketu links
+    unfinished = None
+    for c in sorted(cs, key=lambda c: c["orb"]):
+        if c["planet"] == "Saturn":
+            tgt = a if c["to"] == A else b
+            h = _house_in(tgt, _pts(tgt)[c["point"]])
+            unfinished = (f"Saturn links them in {c['to']}'s {_ord(h)} house, which points to {UNFINISHED[h]}: "
+                          f"this life is the chance to settle it.")
+            break
+    if not unfinished:
+        for c in sorted(cs, key=lambda c: c["orb"]):
+            if c["planet"] == "Ketu":
+                unfinished = (f"{c['frm']}'s Ketu on {c['to']}'s {POINT_NAME[c['point']]} gives a strong sense "
+                              f"of having known each other before; the old bond picks up where it left off.")
+                break
+
+    # 6. Friction
+    hard6 = [p for p in ov_ab.get(6, []) + ov_ba.get(6, []) if p in HARD]
+    friction = ("At times they were on opposite sides, and that rivalry can still flare up "
+                f"({_and(sorted(set(hard6)))} in each other's 6th house of conflict)." if len(hard6) >= 2 else None)
+
+    # 7. This life
+    rahu = [c for c in cs if c["planet"] == "Rahu"]
+    task = ("In this life the pull is forward: they are drawn together to build something new, "
+            f"not only to repeat the past ({rahu[0]['frm']}'s Rahu on {rahu[0]['to']}'s {POINT_NAME[rahu[0]['point']]})."
+            if rahu else "In this life they meet again to complete the work and strengthen the bond.")
+
+    parts = [roles, bond, setting] + extra + ([unfinished] if unfinished else []) + ([friction] if friction else []) + [task]
+    return dict(text=" ".join(parts), roles=roles, bond=bond, setting=setting, extra=extra,
+                unfinished=unfinished, friction=friction, task=task, setting_house=top[0])
