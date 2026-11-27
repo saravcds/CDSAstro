@@ -525,8 +525,11 @@ def day_reading(ch: ac.Chart, md_list: list, d: date, lat: float, lon: float, tz
     tithi = pc["tithi"][0][2] if len(pc["tithi"]) == 1 else pc["tithi"][min(1, len(pc["tithi"]) - 1)][2]
     hm = lambda j: ac.jd_to_local(j, tz).strftime("%I:%M %p").lstrip("0")
     notes = []
-    if tq == "good":
+    if tq == "good" and fc["score"] >= 60:
         work += " The stars are friendly for you today, so it is a good day to start something important."
+    elif tq == "good":
+        work += (" The day's star is friendly, so meetings and routine progress go well, "
+                 "but keep big new starts for a stronger day.")
     elif tara == "Naidhana":
         work += " Avoid risks and important decisions today; plans may not go as expected."
     elif tara == "Janma":
