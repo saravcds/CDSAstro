@@ -350,6 +350,9 @@ import pastlife  # noqa: E402
 import predict as pr  # noqa: E402
 import simple_text as T  # noqa: E402
 import shadbala  # noqa: E402
+import lifeq  # noqa: E402
+import alerts as AL  # noqa: E402
+import wellbeing as WB  # noqa: E402
 import varsha  # noqa: E402
 import lalkitab  # noqa: E402
 import karmic  # noqa: E402
@@ -436,7 +439,8 @@ st.caption(f"Born {ch.dt_local.strftime('%d %b %Y, %H:%M')} · {ch.place or f'{c
 today_iso0 = datetime.now(ZoneInfo(tz0)).date().isoformat()
 
 tabs = st.tabs(["Birth chart", "Dashas", "Yogas & Jaimini", "Transits & key dates", "Daily",
-                "Muhurta finder", "Compatibility", "Predictions", "Life reading", "Past life", "About"])
+                "Muhurta finder", "Compatibility", "Predictions", "Life questions", "Next 90 days",
+                "Life reading", "Past life", "About"])
 
 # ---- Birth chart ------------------------------------------------------------
 with tabs[0]:
@@ -1381,6 +1385,134 @@ with tabs[7]:
                    "and timing, not certainties.")
 
 # ---- Life reading -------------------------------------------------------------------
+
+# ---- Life questions --------------------------------------------------------------------
+
+LEVEL_ICON = {"Strong": "🟢 Strong", "Good": "🟢 Good", "Possible": "🟡 Possible"}
+CARE_ICON = {"Strong": "🔴 Higher care", "Good": "🟠 Care", "Possible": "🟡 Mild care"}
+
+
+@st.cache_data(show_spinner="Studying your chart for the next ten years...")
+def lifeq_for(key, _ch, _md, day_iso):
+    njd = ac.to_jd(datetime.fromisoformat(day_iso + "T12:00"), _ch.tz)
+    return {k: lifeq.answer(_ch, _md, k, njd) for k in lifeq.TOPICS}
+
+
+def _span(w, tz):
+    a = ac.jd_to_local(w["start"], tz).strftime("%b %Y")
+    b = ac.jd_to_local(w["end"], tz).strftime("%b %Y")
+    return a if a == b else f"{a} – {b}"
+
+
+with tabs[8]:
+    st.subheader(f"Life questions: {ch.name}")
+    st.caption("When is something likely to happen? Each answer checks three things together: whether your "
+               "birth chart promises it, whether your running period switches it on, and whether Jupiter and "
+               "Saturn support it by transit at the same time.")
+    LQ = lifeq_for(chart_key(prof), ch, md_list, today_iso0)
+    _ov = []
+    for k_, a_ in LQ.items():
+        n_ = a_["next"]
+        icon_ = CARE_ICON if a_["kind"] == "care" else LEVEL_ICON
+        _ov.append({"Question": a_["title"], "In your chart": f"{a_['promise']['label']} ({a_['promise']['score']}/100)",
+                    "Next window": (f"{icon_[n_['level']]}: {_span(n_, tz0)}" if n_ else "None in the next 10 years")})
+    st.dataframe(pd.DataFrame(_ov), hide_index=True, width="stretch",
+                 column_config={"Question": st.column_config.TextColumn(width="large")})
+    _keys = list(LQ)
+    _q = st.selectbox("Ask about", _keys, format_func=lambda k_: LQ[k_]["title"], key="lq_topic")
+    A = LQ[_q]
+    pr_ = A["promise"]
+    _tone = "good" if pr_["score"] >= 65 else "mixed" if pr_["score"] >= 45 else "bad"
+    cards([("In your birth chart", pr_["label"], f"{pr_['score']} / 100", _tone),
+           ("Next window", _span(A["next"], tz0) if A["next"] else "-",
+            (A["next"]["level"] if A["next"] else "none found") + (" (care)" if A["kind"] == "care" else ""),
+            ("bad" if A["kind"] == "care" else "good") if A["next"] else ""),
+           ("Key planets", pr_["karakas"].split(",")[0], "natural significator", "")])
+    c1_, c2_ = st.columns(2)
+    with c1_:
+        st.markdown("**What supports it**")
+        for x_ in pr_["helps"] or ["No strong support; results come through steady effort."]:
+            st.markdown(f"- {x_}")
+    with c2_:
+        st.markdown("**What holds it back**")
+        for x_ in pr_["hinders"] or ["Nothing major."]:
+            st.markdown(f"- {x_}")
+    st.markdown("#### " + ("Periods to take extra care" if A["kind"] == "care" else "Best windows in the next 10 years"))
+    if not A["windows"]:
+        st.info("No clear window in the next ten years. This does not mean it cannot happen; it means effort "
+                "matters more than timing here.")
+    for w in A["windows"]:
+        icon_ = (CARE_ICON if A["kind"] == "care" else LEVEL_ICON)[w["level"]]
+        peak_ = ac.jd_to_local(w["peak"], tz0).strftime("%b %Y")
+        st.markdown(f"{icon_.split(' ')[0]} **{_span(w, tz0)}**: {' '.join(icon_.split(' ')[1:])} "
+                    f"(peak around {peak_}; {w['chain'][0]} – {w['chain'][1]} period)  \n"
+                    + "; ".join(w["why"]) + ".")
+    boxes([("What to do in these windows", A["do"], "good"), ("What to avoid", A["avoid"], "bad")])
+    if A["happened"]:
+        st.caption(A["happened"])
+    st.caption("Windows show when the stars support a matter most. Your own effort, choices and circumstances "
+               "decide the outcome; use these as a guide, not a certainty.")
+    if tech("lifeq"):
+        prim_, sup_ = lifeq.significators(ch, _q)
+        st.markdown(f"**Houses:** {', '.join(map(str, lifeq.TOPICS[_q]['houses']))} · "
+                    f"**support houses:** {', '.join(map(str, lifeq.TOPICS[_q]['support'])) or '-'} · "
+                    f"**divisional chart:** {('D' + str(lifeq.TOPICS[_q]['varga'])) if lifeq.TOPICS[_q]['varga'] else '-'}")
+        st.markdown(f"**Primary significators:** {', '.join(sorted(prim_))} · **supporting:** {', '.join(sorted(sup_)) or '-'}")
+        st.markdown(f"**Karakas:** {pr_['karakas']}")
+        st.caption("Strong = sub-period lord linked to the matter + Jupiter and Saturn both on the house itself "
+                   "(double transit). Good = linked period + double transit on the house or its lord, or strong "
+                   "Jupiter support. Ashtakavarga: transit signs with 5+ points add strength, 3 or fewer reduce it.")
+
+
+# ---- Next 90 days ----------------------------------------------------------------------
+
+@st.cache_data(show_spinner="Scanning the next 90 days...")
+def alerts_for(key, _ch, _md, d_iso, la, lo, tz, days):
+    return AL.alerts(_ch, _md, date.fromisoformat(d_iso), la, lo, tz, days)
+
+
+with tabs[9]:
+    st.subheader(f"Next 90 days: {ch.name}")
+    c1, c2 = st.columns([1, 2])
+    a_start = c1.date_input("Starting from", value=date.today(), format="DD/MM/YYYY", key="al_date")
+    with c2:
+        ala, alo, atz = location_picker("al", ch.place, (ch.lat, ch.lon, ch.tz))
+    items = alerts_for(chart_key(prof), ch, md_list, a_start.isoformat(), ala, alo, atz, 90)
+    sm = AL.summary(items)
+    nxt_c = next((i for i in sm["chandrashtama"]), None)
+    cards([("Strong days", str(sm["n_good"]), "score 75 or more", "good"),
+           ("Care alerts", str(sm["n_care"]), "go slow on these", "bad"),
+           ("Next strong day", sm["best"][0]["day"].strftime("%a %d %b") if sm["best"] else "-",
+            sm["best"][0]["title"].split("(")[-1].rstrip(")") if sm["best"] else "", "good"),
+           ("Next Chandrashtama", nxt_c["day"].strftime("%a %d %b") if nxt_c else "-", "low-energy days", "mixed")])
+    kinds = ["Best day", "Chandrashtama", "Weak star", "Period change", "Short phase", "Sky event", "Eclipse",
+             "Saturn phase"]
+    present = [k_ for k_ in kinds if any(i["kind"] == k_ for i in items)]
+    show_k = st.multiselect("Show", present, default=[k_ for k_ in present if k_ != "Short phase"], key="al_kinds")
+    TONE_IC = {"good": "🟢", "care": "🟠", "info": "🔵"}
+    cur_m = None
+    for it in items:
+        if it["kind"] not in show_k:
+            continue
+        m_ = it["day"].strftime("%B %Y")
+        if m_ != cur_m:
+            st.markdown(f"#### {m_}")
+            cur_m = m_
+        st.markdown(f"{TONE_IC[it['tone']]} **{it['day'].strftime('%a %d %b')}: {it['title']}**  \n"
+                    f"{it['text']}" + (f" *{it['do']}*" if it["do"] else ""))
+    st.download_button("Add to my calendar (.ics)", AL.to_ics([i for i in items if i["kind"] in show_k], ch.name, atz),
+                       file_name=f"{ch.name}_next_90_days.ics", mime="text/calendar", type="primary")
+    st.caption("The calendar file works with Google Calendar, Outlook and Apple Calendar. Events are marked "
+               "'free' so they don't block your schedule.")
+    if tech("alerts"):
+        st.dataframe(pd.DataFrame([{"Date": i["day"].isoformat(), "Kind": i["kind"], "Tone": i["tone"],
+                                    "Title": i["title"], "Detail": i["text"]} for i in items]),
+                     hide_index=True, width="stretch")
+        st.caption("Strong day = daily score 75+ (Tara Bala, Chandra Bala, Moon's house, tithi, yoga, "
+                   "Ashtakavarga). Weak star = Naidhana always; Vipat or Pratyak only when the day scores under 45. "
+                   "Chhidra = the last short phase of a sub-period.")
+
+
 import life  # noqa: E402
 
 
@@ -1439,7 +1571,7 @@ RATING_ICON = {"Good": "🟢 Good", "Mixed": "🟡 Mixed", "Challenging": "🔴 
 STAR_TONE = {5: "good", 4: "good", 3: "mixed", 2: "bad", 1: "bad"}
 
 
-with tabs[8]:
+with tabs[10]:
     today_iso = datetime.now(ZoneInfo(tz0)).date().isoformat()
     with st.spinner("Building the life reading..."):
         lr = life_for(chart_key(prof), ch, md_list, today_iso)
@@ -1464,6 +1596,29 @@ with tabs[8]:
         st.markdown(" ".join(body_))
     st.markdown("#### Lucky for you")
     lucky_box(rep["lucky"])
+    _hg = WB.happiness_guide(ch, md_list, now_jd)
+    st.markdown("#### Your happiness guide")
+    st.markdown("\n".join(f"- {j_}" for j_ in _hg["joys"]))
+    boxes([("Your best day", _hg["best_day"]["day"], "good"),
+           ("Your best hour", f"The hour of {_hg['best_day']['planet']} (see Daily tab)", "good"),
+           ("Ishta Devata", _hg["ishta"], "")])
+    st.markdown(f"**{_hg['lesson']}**")
+    st.markdown("**Remedies ladder**: start at step 1; most people never need step 4.")
+    for t_, xs_ in _hg["ladder"]:
+        st.markdown(f"*{t_}*  \n" + "  \n".join(f"• {x_}" for x_ in xs_))
+    _others = [(n_, get_chart(p_)) for n_, p_ in profiles.items() if n_ != sel]
+    _ag = WB.avoid_guide(ch, md_list, now_jd, _others)
+    st.markdown("#### What to avoid")
+    if _ag["saturn"] or _ag["periods"]:
+        for r_ in _ag["saturn"] + _ag["periods"]:
+            st.markdown(f"🟠 **{r_['when']}: {r_['what']}**  \n{r_['care']}")
+    st.markdown("**Habits to watch**")
+    st.markdown("\n".join(f"- {h_}" for h_ in _ag["habits"]))
+    st.markdown("**Simple decision rules for you**")
+    st.markdown("\n".join(f"- {r_}" for r_ in _ag["rules"]))
+    if _ag["relations"]:
+        st.markdown("**Relationships that need extra patience** (from your saved profiles)")
+        st.markdown("\n".join(f"- {r_}" for r_ in _ag["relations"]))
     st.markdown("#### Lal Kitab remedies")
     st.caption("Lal Kitab is a separate, remedy-focused system. It does not change the ratings above. "
                "Remedies are simple and optional; follow the ones that feel right to you.")
@@ -1578,7 +1733,7 @@ with tabs[8]:
 
 # ---- Past life ----------------------------------------------------------------
 
-with tabs[9]:
+with tabs[11]:
     pl = pastlife.past_life_report(ch)
     st.subheader(f"Past life report: {ch.name}")
     K, R = ch.planets["Ketu"], ch.planets["Rahu"]
@@ -1626,7 +1781,7 @@ with tabs[9]:
                "for reflection on patterns and lessons, not as fact.")
 
 # ---- About --------------------------------------------------------------------
-with tabs[10]:
+with tabs[12]:
     st.markdown("""
 ### How to read this app
 Every tab starts with a plain-language reading. Turn on **Show technical details** at the bottom of a tab to see
